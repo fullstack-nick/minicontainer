@@ -1,0 +1,9 @@
+Workstation -> IAP tunnel -> private VM TCP 8080 probe:
+  HTTP status: 200
+  Expected marker present: true
+
+The temporary Python HTTP probe was stopped after the call. A post-call socket check confirmed port 8080 was no longer listening.
+
+Runtime prerequisite output on the VM:
+{"linux":true,"cgroup_version":2,"ready":true}
+

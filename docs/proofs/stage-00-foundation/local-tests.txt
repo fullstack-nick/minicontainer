@@ -1,0 +1,10 @@
+PASS GCC 13.3 strict C17 configure/build
+PASS Clang 18.1 strict C17 configure/build
+PASS CTest version and info tests under both compilers
+PASS privileged WSL2 capability audit: systemd, cgroups v2, user/mount/network namespaces, overlayfs, seccomp, delegated unit, nftables
+PASS ShellCheck and actionlint
+PASS Terraform format, validate, and locked-topology test
+PASS gitleaks repository scan
+PASS two clean release builds produced the same Debian package digest
+PASS SPDX JSON SBOM generated with Syft 1.46.0
+

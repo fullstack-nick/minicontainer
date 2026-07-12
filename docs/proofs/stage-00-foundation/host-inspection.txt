@@ -1,0 +1,12 @@
+hostname=minicontainer-vm.us-west1-a.c.minicontainer-r7m5o9ld.internal
+kernel=6.17.0-1020-gcp
+os=Ubuntu 24.04.4 LTS
+pid1=systemd
+cgroup_filesystem=cgroup2fs
+cgroup_controllers=cpuset cpu io memory hugetlb pids rdma misc dmem
+systemd_state=running
+package=minicontainer
+package_version=0.0.1
+
+Instance metadata inspection confirmed OS Login enabled, project SSH keys blocked, serial console disabled, Secure Boot enabled, vTPM enabled, and integrity monitoring enabled.
+

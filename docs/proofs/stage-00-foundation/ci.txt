@@ -1,0 +1,10 @@
+Commit: 5a6e38e4bcdb2e296aa257766c4735cb87535c80
+CI: PASS
+https://github.com/fullstack-nick/minicontainer/actions/runs/29191520754
+CodeQL security-extended: PASS
+https://github.com/fullstack-nick/minicontainer/actions/runs/29191520758
+
+GitHub secret scanning: enabled
+GitHub push protection: enabled
+Dependabot alerts and security updates: enabled
+

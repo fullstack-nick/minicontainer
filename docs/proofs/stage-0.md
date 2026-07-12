@@ -42,4 +42,4 @@ Read-only billing inventory showed five existing linked projects, which accounts
 - CodeQL security-extended analysis on `f2d5dd248a672661371deada1dbec8d92309a83d`: `https://github.com/fullstack-nick/minicontainer/actions/runs/29190881601` — PASS
 - GitHub secret scanning and push protection are enabled; Dependabot alerts and security updates are enabled.
 
-Stage 0 verdict: **OPEN** pending billing linkage, Terraform apply/idempotence, exact-artifact deployment, IAP live calls, host inspection, and final inventory proof.
+Stage 0 verdict: **PASS**. Billing linkage, Terraform apply/idempotence, exact-artifact deployment, IAP live calls, host inspection, and final inventory proof completed on 2026-07-12. Canonical detailed evidence is in `docs/proofs/stage-00-foundation/`.

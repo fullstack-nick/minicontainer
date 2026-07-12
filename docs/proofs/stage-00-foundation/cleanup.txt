@@ -1,0 +1,10 @@
+Post-probe port 8080 listener: absent
+Reserved external addresses: none
+Cloud Routers/NAT gateways: none
+Compute inventory: exactly one RUNNING e2-micro named minicontainer-vm
+VM external IPv4: none
+Storage inventory: exactly one private Terraform state bucket
+Additional development or load-generator VMs: none
+
+Stage 0 cleanup verdict: PASS
+

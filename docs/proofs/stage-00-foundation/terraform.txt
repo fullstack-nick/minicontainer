@@ -1,0 +1,19 @@
+Account guard: PASS for the locked operator and project
+Backend: private, versioned, public-access-prevented GCS bucket in US-WEST1
+Terraform provider: hashicorp/google 7.39.0 from committed lock files
+Apply result: private VPC/subnet, IAP-only firewall, service account, IAM, APIs, budget, and VM created
+Idempotence result: No changes. Infrastructure matches the configuration.
+
+VM assertions:
+  name=minicontainer-vm
+  zone=us-west1-a
+  machine_type=e2-micro
+  status=RUNNING
+  external_ip=none
+  boot_disk=30GB pd-standard
+  secure_boot=true
+  vtpm=true
+  integrity_monitoring=true
+  OS Login=true
+  project SSH keys blocked=true
+

@@ -1,0 +1,13 @@
+Artifact: minicontainer_0.0.1_amd64.deb
+Local SHA-256: da2b8645dd5ffeea59e077267a40c1f5cfe76eaa8a7d01080f3d004739fa5274
+Transport: gcloud compute scp --tunnel-through-iap
+Install: dpkg 0.0.1
+
+Installed version readback:
+{"name":"minicontainer","version":"0.0.1","git_commit":"5a6e38e4bcdb2e296aa257766c4735cb87535c80"}
+
+Remote uploaded-package SHA-256:
+da2b8645dd5ffeea59e077267a40c1f5cfe76eaa8a7d01080f3d004739fa5274
+
+Verdict: exact commit and artifact digest match.
+
