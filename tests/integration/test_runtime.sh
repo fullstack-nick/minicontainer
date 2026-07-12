@@ -38,14 +38,52 @@ grep -q '^PPID=1$' <<< "$output"
 grep -q '^UID=0$' <<< "$output"
 if [[ -z "${MC_TEST_INHERIT_PROC:-}" ]]; then
   grep -q '^UID_MAP=' <<< "$output"
-  grep -q ' /proc proc rw,nosuid,nodev,noexec' <<< "$output"
+grep -q ' /proc proc rw,nosuid,nodev,noexec' <<< "$output"
 fi
+
+export HOST_ONLY_SHOULD_DISAPPEAR=yes
+set +e
+# The single-quoted program is intentionally expanded by the shell inside the container.
+# shellcheck disable=SC2016
+contract="$("$binary" run --image alpine-runtime --env DEMO=value --workdir /tmp \
+  --user 1234:2345 -- /bin/sh -c '
+    printf "DEMO=%s\n" "$DEMO"
+    printf "WORKDIR=%s\n" "$PWD"
+    printf "IDENTITY=%s:%s\n" "$(id -u)" "$(id -g)"
+    test -z "${HOST_ONLY_SHOULD_DISAPPEAR+x}"
+    touch user-write
+')"
+status=$?
+set -e
+if [[ "$status" -ne 0 ]]; then
+  printf 'workload contract exited with %s\n' "$status" >&2
+  exit 1
+fi
+grep -q '^DEMO=value$' <<< "$contract"
+grep -q '^WORKDIR=/tmp$' <<< "$contract"
+grep -q '^IDENTITY=1234:2345$' <<< "$contract"
 
 set +e
 "$binary" run --image alpine-runtime -- /bin/sh -c 'exit 42'
 status=$?
 set -e
 test "$status" -eq 42
+
+signal_output="$workspace/signal.out"
+"$binary" run --image alpine-runtime -- /bin/sh -c \
+  'trap "exit 33" TERM; echo READY; while :; do sleep 1; done' > "$signal_output" &
+launcher=$!
+for _ in $(seq 1 50); do
+  grep -q '^READY$' "$signal_output" 2>/dev/null && break
+  sleep 0.1
+done
+grep -q '^READY$' "$signal_output"
+kill -TERM "$launcher"
+set +e
+wait "$launcher"
+status=$?
+set -e
+test "$status" -eq 33
 
 if [[ -d "$workspace/state/containers" ]]; then
   test -z "$(find "$workspace/state/containers" -mindepth 1 -print -quit)"

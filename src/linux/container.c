@@ -42,6 +42,42 @@ struct child_context {
     int barrier;
 };
 
+static volatile sig_atomic_t forward_target = -1;
+static const int forwarded_signals[] = {SIGTERM, SIGINT, SIGHUP, SIGQUIT};
+
+static void forward_signal(int signal_number) {
+    const pid_t target = (pid_t)forward_target;
+    if (target > 0) {
+        (void)kill(target, signal_number);
+    }
+}
+
+static int install_forwarders(struct sigaction previous[4]) {
+    struct sigaction action;
+    size_t index;
+    (void)memset(&action, 0, sizeof(action));
+    action.sa_handler = forward_signal;
+    (void)sigemptyset(&action.sa_mask);
+    for (index = 0U; index < 4U; ++index) {
+        if (sigaction(forwarded_signals[index], &action, &previous[index]) != 0) {
+            while (index > 0U) {
+                --index;
+                (void)sigaction(forwarded_signals[index], &previous[index], NULL);
+            }
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static void restore_forwarders(const struct sigaction previous[4]) {
+    size_t index;
+    forward_target = -1;
+    for (index = 0U; index < 4U; ++index) {
+        (void)sigaction(forwarded_signals[index], &previous[index], NULL);
+    }
+}
+
 static int join_path(char *output, size_t size, const char *left, const char *right) {
     const size_t left_length = strlen(left);
     const size_t right_length = strlen(right);
@@ -68,7 +104,7 @@ static int prepare_paths(const char *id, uint32_t uid, uint32_t gid,
                      "runtime path is too long");
         return -1;
     }
-    if (mc_mkdir_p(paths->upper, 0700, error) != 0 ||
+    if (mc_mkdir_p(paths->upper, 0755, error) != 0 ||
         mc_mkdir_p(paths->work, 0700, error) != 0 ||
         mc_mkdir_p(paths->merged, 0755, error) != 0) {
         return -1;
@@ -242,7 +278,28 @@ static int configure_loopback(void) {
     return close(descriptor);
 }
 
-static int supervise(char *const command[]) {
+static int install_environment(const struct mc_run_config *config) {
+    size_t index;
+
+    if (clearenv() != 0 || setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1) != 0 ||
+        setenv("HOME", config->user == 0U ? "/root" : "/", 1) != 0 ||
+        setenv("HOSTNAME", config->hostname, 1) != 0) {
+        return -1;
+    }
+    for (index = 0U; index < config->environment_count; ++index) {
+        const char *equals = strchr(config->environment[index], '=');
+        const size_t key_length = (size_t)(equals - config->environment[index]);
+        char *key = strndup(config->environment[index], key_length);
+        if (key == NULL || setenv(key, equals + 1, 1) != 0) {
+            free(key);
+            return -1;
+        }
+        free(key);
+    }
+    return 0;
+}
+
+static int supervise(const struct mc_run_config *config) {
     sigset_t signals;
     sigset_t empty;
     pid_t workload;
@@ -263,9 +320,27 @@ static int supervise(char *const command[]) {
         (void)sigemptyset(&empty);
         (void)sigprocmask(SIG_SETMASK, &empty, NULL);
         if (setsid() < 0) {
+            (void)fprintf(stderr, "minicontainer-init: setsid: %s\n", strerror(errno));
             _exit(125);
         }
-        execvp(command[0], command);
+        if (chdir(config->workdir) != 0) {
+            (void)fprintf(stderr, "minicontainer-init: workdir %s: %s\n", config->workdir,
+                          strerror(errno));
+            _exit(125);
+        }
+        if (setresgid(config->group, config->group, config->group) != 0 ||
+            setresuid(config->user, config->user, config->user) != 0) {
+            (void)fprintf(stderr, "minicontainer-init: workload identity: %s\n",
+                          strerror(errno));
+            _exit(125);
+        }
+        if (install_environment(config) != 0) {
+            (void)fprintf(stderr, "minicontainer-init: environment: %s\n", strerror(errno));
+            _exit(125);
+        }
+        execvp(config->command[0], config->command);
+        (void)fprintf(stderr, "minicontainer-init: exec %s: %s\n", config->command[0],
+                      strerror(errno));
         _exit(errno == ENOENT ? 127 : 126);
     }
     if (workload < 0) {
@@ -365,7 +440,7 @@ static int child_main(const struct child_context *context) {
     if (setup_root(context) != 0) {
         return 125;
     }
-    return supervise(context->config->command);
+    return supervise(context->config);
 }
 
 static int remove_entry(const char *path, const struct stat *metadata, int type,
@@ -392,10 +467,17 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     int pidfd = -1;
     pid_t child;
     int status;
+    struct sigaction previous[4];
+    int forwarders_installed = 0;
 
     if (geteuid() != 0) {
         mc_error_set(error, MC_EXIT_PERMISSION, EPERM, "run", config->id,
                      "container execution requires root");
+        return -1;
+    }
+    if (setgroups(0U, NULL) != 0) {
+        mc_error_set(error, MC_EXIT_PERMISSION, errno, "run", config->id,
+                     "cannot clear supplementary groups");
         return -1;
     }
     if (strchr(config->rootfs, ',') != NULL ||
@@ -449,10 +531,25 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
         return -1;
     }
     (void)close(barrier[1]);
-    if (waitpid(child, &status, 0) < 0) {
+    forward_target = (sig_atomic_t)child;
+    if (install_forwarders(previous) != 0) {
+        (void)kill(child, SIGKILL);
+    } else {
+        forwarders_installed = 1;
+    }
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno == EINTR) {
+            continue;
+        }
         mc_error_set(error, MC_EXIT_RUNTIME, errno, "wait-container", config->id,
                      "cannot wait for container init");
         status = -1;
+        break;
+    }
+    if (forwarders_installed != 0) {
+        restore_forwarders(previous);
+    } else {
+        forward_target = -1;
     }
     if (pidfd >= 0) {
         (void)close(pidfd);

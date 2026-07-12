@@ -26,6 +26,16 @@ int main(void) {
            "relative link remaining in root accepted");
     expect(mc_link_stays_beneath("usr/key", "../../../../host") == 0,
            "relative link escaping root rejected");
+    expect(mc_valid_environment("DEMO=value") != 0, "valid environment assignment");
+    expect(mc_valid_environment("9BAD=value") == 0, "invalid environment key rejected");
+    {
+        unsigned int user = 0U;
+        unsigned int group = 0U;
+        expect(mc_parse_user("1000:1001", &user, &group) != 0 && user == 1000U &&
+                   group == 1001U,
+               "numeric user and group parsed");
+        expect(mc_parse_user("70000", &user, &group) == 0, "out-of-range user rejected");
+    }
     if (failures == 0) {
         (void)puts("PASS core validation tests");
     }

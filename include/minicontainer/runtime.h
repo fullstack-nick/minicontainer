@@ -3,10 +3,18 @@
 
 #include "minicontainer/error.h"
 
+#include <stddef.h>
+#include <sys/types.h>
+
 struct mc_run_config {
     char *id;
     char *rootfs;
     char *hostname;
+    char *workdir;
+    uid_t user;
+    gid_t group;
+    char **environment;
+    size_t environment_count;
     char *const *command;
 };
 

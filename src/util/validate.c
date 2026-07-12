@@ -3,6 +3,8 @@
 #include <ctype.h>
 #include <stddef.h>
 #include <string.h>
+#include <errno.h>
+#include <stdlib.h>
 
 int mc_valid_name(const char *name) {
     size_t index;
@@ -102,4 +104,50 @@ int mc_link_stays_beneath(const char *entry_path, const char *target) {
         return 0;
     }
     return apply_components(target, &depth);
+}
+
+int mc_valid_environment(const char *assignment) {
+    const char *equals;
+    const char *cursor;
+
+    if (assignment == NULL || (equals = strchr(assignment, '=')) == NULL ||
+        equals == assignment || !(isalpha((unsigned char)assignment[0]) || assignment[0] == '_')) {
+        return 0;
+    }
+    for (cursor = assignment + 1; cursor < equals; ++cursor) {
+        if (!(isalnum((unsigned char)*cursor) || *cursor == '_')) {
+            return 0;
+        }
+    }
+    return strchr(equals + 1, '\n') == NULL && strchr(equals + 1, '\r') == NULL;
+}
+
+int mc_parse_user(const char *value, unsigned int *user, unsigned int *group) {
+    char *end = NULL;
+    unsigned long parsed_user;
+    unsigned long parsed_group;
+
+    if (value == NULL || user == NULL || group == NULL || value[0] == '\0') {
+        return 0;
+    }
+    errno = 0;
+    parsed_user = strtoul(value, &end, 10);
+    if (errno != 0 || end == value || parsed_user > 65535UL) {
+        return 0;
+    }
+    parsed_group = parsed_user;
+    if (*end == ':') {
+        const char *group_start = end + 1;
+        errno = 0;
+        parsed_group = strtoul(group_start, &end, 10);
+        if (errno != 0 || end == group_start || parsed_group > 65535UL) {
+            return 0;
+        }
+    }
+    if (*end != '\0') {
+        return 0;
+    }
+    *user = (unsigned int)parsed_user;
+    *group = (unsigned int)parsed_group;
+    return 1;
 }
