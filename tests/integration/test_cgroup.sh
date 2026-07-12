@@ -4,6 +4,7 @@ set -euo pipefail
 binary="${1:?minicontainer binary is required}"
 shim="${2:?minicontainer shim is required}"
 archive="${3:?Alpine archive is required}"
+fork_pressure_binary="${4:-}"
 (( EUID == 0 )) || { printf 'cgroup integration test requires root\n' >&2; exit 2; }
 
 workspace="$(mktemp -d /tmp/minicontainer-cgroup-test.XXXXXX)"
@@ -24,8 +25,12 @@ export MC_SHIM_PATH="$shim"
 "$binary" image import alpine-cgroup "$archive" >/dev/null
 digest="$(sed 's/^sha256://' "$MC_STATE_DIR/images/names/alpine-cgroup")"
 rootfs="$MC_STATE_DIR/images/sha256/$digest/rootfs"
-cc -static -O2 -o "$workspace/fork-pressure" \
-  "$(dirname "$0")/../fixtures/fork_pressure.c"
+if [[ -n "$fork_pressure_binary" ]]; then
+  cp "$fork_pressure_binary" "$workspace/fork-pressure"
+else
+  cc -static -O2 -o "$workspace/fork-pressure" \
+    "$(dirname "$0")/../fixtures/fork_pressure.c"
+fi
 cp "$workspace/fork-pressure" "$rootfs/fork-pressure"
 chown --reference="$rootfs" "$rootfs/fork-pressure"
 chmod 0755 "$rootfs/fork-pressure"
