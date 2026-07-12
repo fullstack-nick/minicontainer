@@ -1,6 +1,8 @@
 #include "minicontainer/info.h"
 #include "minicontainer/error.h"
 #include "minicontainer/image.h"
+#include "minicontainer/id.h"
+#include "minicontainer/runtime.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -17,7 +19,8 @@ static void usage(FILE *stream) {
                   "usage:\n"
                   "  minicontainer version [--json]\n"
                   "  minicontainer info [--json]\n"
-                  "  minicontainer image import NAME ROOTFS_TAR [--json]\n");
+                  "  minicontainer image import NAME ROOTFS_TAR [--json]\n"
+                  "  minicontainer run --image NAME [--hostname NAME] -- COMMAND [ARG...]\n");
 }
 
 int main(int argc, char **argv) {
@@ -70,6 +73,56 @@ int main(int argc, char **argv) {
             (void)printf("imported %s sha256:%s\n", argv[3], imported.digest);
         }
         return MC_EXIT_OK;
+    }
+    if (strcmp(argv[1], "run") == 0) {
+        const char *image = NULL;
+        char *hostname = NULL;
+        char generated_hostname[16];
+        char id[33];
+        char rootfs[4096];
+        int command_index = -1;
+        int index;
+        struct mc_run_config config;
+        int result;
+
+        for (index = 2; index < argc; ++index) {
+            if (strcmp(argv[index], "--") == 0) {
+                command_index = index + 1;
+                break;
+            }
+            if (strcmp(argv[index], "--image") == 0 && index + 1 < argc) {
+                image = argv[++index];
+            } else if (strcmp(argv[index], "--hostname") == 0 && index + 1 < argc) {
+                hostname = argv[++index];
+            } else {
+                usage(stderr);
+                return MC_EXIT_USAGE;
+            }
+        }
+        if (image == NULL || command_index < 0 || command_index >= argc ||
+            mc_image_resolve(image, rootfs, sizeof(rootfs), &error) != 0 ||
+            mc_generate_id(id, &error) != 0) {
+            if (error.code != 0) {
+                mc_error_print(&error, 0);
+                return error.code;
+            }
+            usage(stderr);
+            return MC_EXIT_USAGE;
+        }
+        if (hostname == NULL) {
+            (void)snprintf(generated_hostname, sizeof(generated_hostname), "mc-%.12s", id);
+            hostname = generated_hostname;
+        }
+        config.id = id;
+        config.rootfs = rootfs;
+        config.hostname = hostname;
+        config.command = &argv[command_index];
+        result = mc_launch_shim(&config, &error);
+        if (result < 0) {
+            mc_error_print(&error, 0);
+            return error.code;
+        }
+        return result;
     }
     usage(stderr);
     return 2;

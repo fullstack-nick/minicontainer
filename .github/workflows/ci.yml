@@ -23,6 +23,16 @@ jobs:
         run: cmake --build --preset dev-${{ matrix.compiler }}
       - name: Test
         run: ctest --preset dev-${{ matrix.compiler }}
+      - name: Privileged namespace and rootfs smoke
+        if: matrix.compiler == 'gcc'
+        run: |
+          sudo useradd --system --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin minicontainer
+          echo 'minicontainer:200000:65536' | sudo tee -a /etc/subuid /etc/subgid >/dev/null
+          archive="$(bash scripts/fetch-alpine-rootfs.sh)"
+          sudo bash tests/integration/test_runtime.sh \
+            "$PWD/build/dev-gcc/minicontainer" \
+            "$PWD/build/dev-gcc/minicontainer-shim" \
+            "$archive"
 
   infrastructure:
     runs-on: ubuntu-24.04

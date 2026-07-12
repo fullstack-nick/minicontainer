@@ -1,6 +1,7 @@
 #include "minicontainer/image.h"
 
 #include "minicontainer/fs.h"
+#include "minicontainer/subid.h"
 #include "minicontainer/validate.h"
 
 #include <archive.h>
@@ -76,7 +77,8 @@ fail:
     return -1;
 }
 
-static int validate_entry(struct archive_entry *entry, struct mc_error *error) {
+static int validate_entry(struct archive_entry *entry, uint32_t uid_start, uint32_t gid_start,
+                          struct mc_error *error) {
     const char *path = archive_entry_pathname(entry);
     const char *symlink = archive_entry_symlink(entry);
     const char *hardlink = archive_entry_hardlink(entry);
@@ -115,11 +117,13 @@ static int validate_entry(struct archive_entry *entry, struct mc_error *error) {
                      "archive owner is outside the container ID range");
         return -1;
     }
+    archive_entry_set_uid(entry, (la_int64_t)uid_start + archive_entry_uid(entry));
+    archive_entry_set_gid(entry, (la_int64_t)gid_start + archive_entry_gid(entry));
     return 0;
 }
 
 static int extract_archive(const char *source, const char *destination,
-                           struct mc_error *error) {
+                           uint32_t uid_start, uint32_t gid_start, struct mc_error *error) {
     struct archive *reader = NULL;
     struct archive *writer = NULL;
     struct archive_entry *entry = NULL;
@@ -138,6 +142,7 @@ static int extract_archive(const char *source, const char *destination,
     archive_read_support_filter_all(reader);
     archive_read_support_format_tar(reader);
     archive_write_disk_set_options(writer, ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_PERM |
+                                               ARCHIVE_EXTRACT_OWNER |
                                                ARCHIVE_EXTRACT_SECURE_NODOTDOT |
                                                ARCHIVE_EXTRACT_SECURE_NOABSOLUTEPATHS |
                                                ARCHIVE_EXTRACT_SECURE_SYMLINKS);
@@ -148,7 +153,7 @@ static int extract_archive(const char *source, const char *destination,
         goto cleanup;
     }
     while ((result = archive_read_next_header(reader, &entry)) == ARCHIVE_OK) {
-        const int validation = validate_entry(entry, error);
+        const int validation = validate_entry(entry, uid_start, gid_start, error);
         if (validation > 0) {
             (void)archive_read_data_skip(reader);
             continue;
@@ -195,6 +200,8 @@ int mc_image_import(const char *name, const char *archive_path,
     char name_path[PATH_MAX];
     char digest_record[80];
     struct stat metadata;
+    uint32_t uid_start;
+    uint32_t gid_start;
 
     if (!mc_valid_name(name)) {
         mc_error_set(error, MC_EXIT_USAGE, 0, "image-import", name, "invalid image name");
@@ -207,6 +214,9 @@ int mc_image_import(const char *name, const char *archive_path,
         return -1;
     }
     if (archive_digest(archive_path, result->digest, error) != 0) {
+        return -1;
+    }
+    if (mc_subid_range(&uid_start, &gid_start, error) != 0) {
         return -1;
     }
     if (path_join(digest_base, sizeof(digest_base), mc_state_dir(), "images/sha256", error) !=
@@ -235,7 +245,8 @@ int mc_image_import(const char *name, const char *archive_path,
             mc_mkdir_p(staging_rootfs, 0755, error) != 0) {
             return -1;
         }
-        if (extract_archive(archive_path, staging_rootfs, error) != 0 ||
+        if (chown(staging_rootfs, (uid_t)uid_start, (gid_t)gid_start) != 0 ||
+            extract_archive(archive_path, staging_rootfs, uid_start, gid_start, error) != 0 ||
             mc_write_atomic(staging_marker, result->digest, strlen(result->digest), 0444, error) !=
                 0) {
             return -1;
@@ -252,4 +263,59 @@ int mc_image_import(const char *name, const char *archive_path,
     }
     (void)snprintf(digest_record, sizeof(digest_record), "sha256:%s\n", result->digest);
     return mc_write_atomic(name_path, digest_record, strlen(digest_record), 0644, error);
+}
+
+int mc_image_resolve(const char *name, char *rootfs, unsigned long rootfs_size,
+                     struct mc_error *error) {
+    char names_dir[PATH_MAX];
+    char name_path[PATH_MAX];
+    char digest_dir[PATH_MAX];
+    char image_dir[PATH_MAX];
+    char marker[PATH_MAX];
+    char record[80];
+    int descriptor;
+    ssize_t count;
+    size_t digest_length;
+
+    if (!mc_valid_name(name) || rootfs == NULL || rootfs_size == 0UL) {
+        mc_error_set(error, MC_EXIT_USAGE, 0, "image-resolve", name, "invalid image name");
+        return -1;
+    }
+    if (path_join(names_dir, sizeof(names_dir), mc_state_dir(), "images/names", error) != 0 ||
+        path_join(name_path, sizeof(name_path), names_dir, name, error) != 0) {
+        return -1;
+    }
+    descriptor = open(name_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0) {
+        mc_error_set(error, MC_EXIT_NOT_FOUND, errno, "image-resolve", name,
+                     "image name does not exist");
+        return -1;
+    }
+    count = read(descriptor, record, sizeof(record) - 1U);
+    (void)close(descriptor);
+    if (count < 0) {
+        mc_error_set(error, MC_EXIT_RUNTIME, errno, "image-resolve", name,
+                     "cannot read image record");
+        return -1;
+    }
+    record[(size_t)count] = '\0';
+    digest_length = strcspn(record, "\r\n");
+    record[digest_length] = '\0';
+    if (digest_length != 71U || strncmp(record, "sha256:", 7U) != 0) {
+        mc_error_set(error, MC_EXIT_RUNTIME, 0, "image-resolve", name,
+                     "image record has an invalid digest");
+        return -1;
+    }
+    if (path_join(digest_dir, sizeof(digest_dir), mc_state_dir(), "images/sha256", error) != 0 ||
+        path_join(image_dir, sizeof(image_dir), digest_dir, record + 7, error) != 0 ||
+        path_join(rootfs, (size_t)rootfs_size, image_dir, "rootfs", error) != 0 ||
+        path_join(marker, sizeof(marker), image_dir, ".complete", error) != 0) {
+        return -1;
+    }
+    if (access(marker, R_OK) != 0) {
+        mc_error_set(error, MC_EXIT_RUNTIME, errno, "image-resolve", name,
+                     "image is incomplete");
+        return -1;
+    }
+    return 0;
 }

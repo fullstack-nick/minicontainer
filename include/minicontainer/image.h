@@ -10,5 +10,7 @@ struct mc_image_result {
 
 int mc_image_import(const char *name, const char *archive_path,
                     struct mc_image_result *result, struct mc_error *error);
+int mc_image_resolve(const char *name, char *rootfs, unsigned long rootfs_size,
+                     struct mc_error *error);
 
 #endif

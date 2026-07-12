@@ -2,6 +2,9 @@
 set -euo pipefail
 
 binary="${1:?minicontainer binary is required}"
+MC_SUBUID_START="$(id -u)"
+MC_SUBGID_START="$(id -g)"
+export MC_SUBUID_START MC_SUBGID_START
 workspace="$(mktemp -d /tmp/minicontainer-image-test.XXXXXX)"
 cleanup() {
   chmod -R u+w "$workspace" 2>/dev/null || true
