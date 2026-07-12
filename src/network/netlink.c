@@ -38,13 +38,13 @@ struct route_request {
 
 static uint32_t sequence = 1U;
 
-static int add_attribute(struct nlmsghdr *header, size_t capacity, unsigned short type,
+static int add_attribute(void *buffer, struct nlmsghdr *header, size_t capacity, unsigned short type,
                          const void *data, size_t length) {
     const size_t offset = NLMSG_ALIGN(header->nlmsg_len);
     const size_t attribute_length = RTA_LENGTH(length);
     struct rtattr *attribute;
     if (offset + RTA_ALIGN(attribute_length) > capacity) { errno = EOVERFLOW; return -1; }
-    attribute = (struct rtattr *)((unsigned char *)header + offset);
+    attribute = (struct rtattr *)((unsigned char *)buffer + offset);
     attribute->rta_type = type;
     attribute->rta_len = (unsigned short)attribute_length;
     if (length > 0U) (void)memcpy(RTA_DATA(attribute), data, length);
@@ -52,12 +52,12 @@ static int add_attribute(struct nlmsghdr *header, size_t capacity, unsigned shor
     return 0;
 }
 
-static struct rtattr *begin_nested(struct nlmsghdr *header, size_t capacity,
+static struct rtattr *begin_nested(void *buffer, struct nlmsghdr *header, size_t capacity,
                                    unsigned short type) {
     const size_t offset = NLMSG_ALIGN(header->nlmsg_len);
     struct rtattr *nested;
     if (offset + RTA_ALIGN(RTA_LENGTH(0U)) > capacity) { errno = EOVERFLOW; return NULL; }
-    nested = (struct rtattr *)((unsigned char *)header + offset);
+    nested = (struct rtattr *)((unsigned char *)buffer + offset);
     nested->rta_type = (unsigned short)(type | NLA_F_NESTED);
     nested->rta_len = (unsigned short)RTA_LENGTH(0U);
     header->nlmsg_len = (uint32_t)(offset + RTA_ALIGN(RTA_LENGTH(0U)));
@@ -117,9 +117,9 @@ static int create_bridge(void) {
     request.header.nlmsg_type = RTM_NEWLINK;
     request.header.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_EXCL;
     request.link.ifi_family = AF_UNSPEC;
-    if (add_attribute(&request.header, sizeof(request), IFLA_IFNAME, name, sizeof(name)) != 0 ||
-        (link_info = begin_nested(&request.header, sizeof(request), IFLA_LINKINFO)) == NULL ||
-        add_attribute(&request.header, sizeof(request), IFLA_INFO_KIND, kind, sizeof(kind)) != 0)
+    if (add_attribute(&request, &request.header, sizeof(request), IFLA_IFNAME, name, sizeof(name)) != 0 ||
+        (link_info = begin_nested(&request, &request.header, sizeof(request), IFLA_LINKINFO)) == NULL ||
+        add_attribute(&request, &request.header, sizeof(request), IFLA_INFO_KIND, kind, sizeof(kind)) != 0)
         return -1;
     end_nested(&request.header, link_info);
     if (netlink_exchange(&request.header) != 0 && errno != EEXIST) return -1;
@@ -135,11 +135,11 @@ static int configure_link(int index, int up, int master, pid_t netns_pid,
     request.header.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
     request.link.ifi_family = AF_UNSPEC; request.link.ifi_index = index;
     if (up != 0) { request.link.ifi_flags = IFF_UP; request.link.ifi_change = IFF_UP; }
-    if ((master > 0 && add_attribute(&request.header, sizeof(request), IFLA_MASTER,
+    if ((master > 0 && add_attribute(&request, &request.header, sizeof(request), IFLA_MASTER,
                                      &master, sizeof(master)) != 0) ||
-        (netns_pid > 0 && add_attribute(&request.header, sizeof(request), IFLA_NET_NS_PID,
+        (netns_pid > 0 && add_attribute(&request, &request.header, sizeof(request), IFLA_NET_NS_PID,
                                         &netns_pid, sizeof(netns_pid)) != 0) ||
-        (new_name != NULL && add_attribute(&request.header, sizeof(request), IFLA_IFNAME,
+        (new_name != NULL && add_attribute(&request, &request.header, sizeof(request), IFLA_IFNAME,
                                            new_name, strlen(new_name) + 1U) != 0)) return -1;
     return netlink_exchange(&request.header);
 }
@@ -153,8 +153,8 @@ static int add_ipv4_address(int index, unsigned int ipv4_host, unsigned char pre
     request.header.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_EXCL;
     request.address.ifa_family = AF_INET; request.address.ifa_prefixlen = prefix;
     request.address.ifa_scope = RT_SCOPE_UNIVERSE; request.address.ifa_index = (unsigned int)index;
-    if (add_attribute(&request.header, sizeof(request), IFA_LOCAL, &address, sizeof(address)) != 0 ||
-        add_attribute(&request.header, sizeof(request), IFA_ADDRESS, &address, sizeof(address)) != 0)
+    if (add_attribute(&request, &request.header, sizeof(request), IFA_LOCAL, &address, sizeof(address)) != 0 ||
+        add_attribute(&request, &request.header, sizeof(request), IFA_ADDRESS, &address, sizeof(address)) != 0)
         return -1;
     if (netlink_exchange(&request.header) != 0 && errno != EEXIST) return -1;
     return 0;
@@ -170,18 +170,18 @@ static int create_veth(const char *host, const char *peer) {
     request.header.nlmsg_type = RTM_NEWLINK;
     request.header.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_EXCL;
     request.link.ifi_family = AF_UNSPEC;
-    if (add_attribute(&request.header, sizeof(request), IFLA_IFNAME, host, strlen(host) + 1U) != 0 ||
-        (link_info = begin_nested(&request.header, sizeof(request), IFLA_LINKINFO)) == NULL ||
-        add_attribute(&request.header, sizeof(request), IFLA_INFO_KIND, kind, sizeof(kind)) != 0 ||
-        (info_data = begin_nested(&request.header, sizeof(request), IFLA_INFO_DATA)) == NULL ||
-        (peer_data = begin_nested(&request.header, sizeof(request), VETH_INFO_PEER)) == NULL) return -1;
+    if (add_attribute(&request, &request.header, sizeof(request), IFLA_IFNAME, host, strlen(host) + 1U) != 0 ||
+        (link_info = begin_nested(&request, &request.header, sizeof(request), IFLA_LINKINFO)) == NULL ||
+        add_attribute(&request, &request.header, sizeof(request), IFLA_INFO_KIND, kind, sizeof(kind)) != 0 ||
+        (info_data = begin_nested(&request, &request.header, sizeof(request), IFLA_INFO_DATA)) == NULL ||
+        (peer_data = begin_nested(&request, &request.header, sizeof(request), VETH_INFO_PEER)) == NULL) return -1;
     (void)memset(&peer_link, 0, sizeof(peer_link));
     if ((size_t)request.header.nlmsg_len + NLMSG_ALIGN(sizeof(peer_link)) > sizeof(request)) {
         errno = EOVERFLOW; return -1;
     }
     (void)memcpy((unsigned char *)&request + request.header.nlmsg_len, &peer_link, sizeof(peer_link));
     request.header.nlmsg_len += (uint32_t)NLMSG_ALIGN(sizeof(peer_link));
-    if (add_attribute(&request.header, sizeof(request), IFLA_IFNAME, peer, strlen(peer) + 1U) != 0)
+    if (add_attribute(&request, &request.header, sizeof(request), IFLA_IFNAME, peer, strlen(peer) + 1U) != 0)
         return -1;
     end_nested(&request.header, peer_data); end_nested(&request.header, info_data);
     end_nested(&request.header, link_info);
@@ -198,8 +198,8 @@ static int add_default_route(int interface_index) {
     request.route.rtm_family = AF_INET; request.route.rtm_table = RT_TABLE_MAIN;
     request.route.rtm_protocol = RTPROT_BOOT; request.route.rtm_scope = RT_SCOPE_UNIVERSE;
     request.route.rtm_type = RTN_UNICAST;
-    if (add_attribute(&request.header, sizeof(request), RTA_GATEWAY, &gateway, sizeof(gateway)) != 0 ||
-        add_attribute(&request.header, sizeof(request), RTA_OIF, &interface_index,
+    if (add_attribute(&request, &request.header, sizeof(request), RTA_GATEWAY, &gateway, sizeof(gateway)) != 0 ||
+        add_attribute(&request, &request.header, sizeof(request), RTA_OIF, &interface_index,
                       sizeof(interface_index)) != 0) return -1;
     if (netlink_exchange(&request.header) != 0 && errno != EEXIST) return -1;
     return 0;
