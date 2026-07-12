@@ -8,14 +8,17 @@
 #include <fcntl.h>
 #include <ftw.h>
 #include <grp.h>
+#include <json-c/json.h>
 #include <linux/sched.h>
 #include <net/if.h>
+#include <poll.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
@@ -23,11 +26,19 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/time.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #ifndef SYS_clone3
 #define SYS_clone3 435
+#endif
+#ifndef MC_VERSION
+#define MC_VERSION "unknown"
+#endif
+#ifndef MC_GIT_COMMIT
+#define MC_GIT_COMMIT "unknown"
 #endif
 
 struct runtime_paths {
@@ -36,6 +47,8 @@ struct runtime_paths {
     char work[4096];
     char merged[4096];
     char state[4096];
+    char runtime[4096];
+    char control[4096];
 };
 
 struct child_context {
@@ -44,6 +57,25 @@ struct child_context {
     int barrier;
     int ready;
 };
+
+struct namespace_identity {
+    unsigned long long user, pid, mount, uts, ipc, network, cgroup;
+};
+
+static unsigned long long namespace_inode(pid_t pid, const char *name) {
+    char path[128];
+    struct stat metadata;
+    const int length = snprintf(path, sizeof(path), "/proc/%ld/ns/%s", (long)pid, name);
+    if (length < 0 || (size_t)length >= sizeof(path) || stat(path, &metadata) != 0) return 0ULL;
+    return (unsigned long long)metadata.st_ino;
+}
+
+static void capture_namespaces(pid_t pid, struct namespace_identity *identity) {
+    identity->user = namespace_inode(pid, "user"); identity->pid = namespace_inode(pid, "pid");
+    identity->mount = namespace_inode(pid, "mnt"); identity->uts = namespace_inode(pid, "uts");
+    identity->ipc = namespace_inode(pid, "ipc"); identity->network = namespace_inode(pid, "net");
+    identity->cgroup = namespace_inode(pid, "cgroup");
+}
 
 static volatile sig_atomic_t forward_target = -1;
 static const int forwarded_signals[] = {SIGTERM, SIGINT, SIGHUP, SIGQUIT};
@@ -103,7 +135,9 @@ static int prepare_paths(const char *id, uint32_t uid, uint32_t gid,
         join_path(paths->upper, sizeof(paths->upper), paths->base, "upper") != 0 ||
         join_path(paths->work, sizeof(paths->work), paths->base, "work") != 0 ||
         join_path(paths->merged, sizeof(paths->merged), paths->base, "merged") != 0 ||
-        join_path(paths->state, sizeof(paths->state), paths->base, "state.json") != 0) {
+        join_path(paths->state, sizeof(paths->state), paths->base, "state.json") != 0 ||
+        join_path(paths->runtime, sizeof(paths->runtime), mc_runtime_dir(), id) != 0 ||
+        join_path(paths->control, sizeof(paths->control), paths->runtime, "control.sock") != 0) {
         mc_error_set(error, MC_EXIT_USAGE, errno, "prepare-runtime", id,
                      "runtime path is too long");
         return -1;
@@ -122,6 +156,81 @@ static int prepare_paths(const char *id, uint32_t uid, uint32_t gid,
         return -1;
     }
     return 0;
+}
+
+static int open_control_socket(const struct runtime_paths *paths, struct mc_error *error) {
+    struct sockaddr_un address;
+    int listener;
+    if (strlen(paths->control) >= sizeof(address.sun_path) ||
+        mc_mkdir_p(paths->runtime, 0700, error) != 0) return -1;
+    (void)chmod(paths->runtime, 0700);
+    listener = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    if (listener < 0) goto failure;
+    (void)memset(&address, 0, sizeof(address)); address.sun_family = AF_UNIX;
+    (void)memcpy(address.sun_path, paths->control, strlen(paths->control) + 1U);
+    (void)unlink(paths->control);
+    if (bind(listener, (const struct sockaddr *)&address, sizeof(address)) != 0 ||
+        chmod(paths->control, 0600) != 0 || listen(listener, 8) != 0) {
+        const int saved = errno; (void)close(listener); errno = saved; goto failure;
+    }
+    return listener;
+failure:
+    mc_error_set(error, MC_EXIT_RUNTIME, errno, "control-socket", paths->control,
+                 "cannot create root-only shim control socket");
+    return -1;
+}
+
+static void control_reply(int connection, int ok, const char *message) {
+    char response[256];
+    const int length = snprintf(response, sizeof(response),
+                                "{\"version\":1,\"ok\":%s,\"message\":\"%s\"}",
+                                ok != 0 ? "true" : "false", message);
+    if (length > 0 && (size_t)length < sizeof(response))
+        (void)send(connection, response, (size_t)length, MSG_NOSIGNAL);
+}
+
+static void handle_control(int listener, int pidfd, const struct mc_cgroup *cgroup) {
+    int connection = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
+    struct ucred credentials;
+    socklen_t credential_size = sizeof(credentials);
+    char request[1025];
+    ssize_t length;
+    json_object *root = NULL, *value;
+    int signal_number;
+    struct timeval timeout = {.tv_sec = 1, .tv_usec = 0};
+    if (connection < 0) return;
+    (void)setsockopt(connection, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    length = recv(connection, request, sizeof(request) - 1U, 0);
+    if (length <= 0 || length >= (ssize_t)sizeof(request)) goto invalid;
+    if (getsockopt(connection, SOL_SOCKET, SO_PEERCRED, &credentials, &credential_size) != 0 ||
+        credentials.uid != 0U) {
+        control_reply(connection, 0, "permission denied"); (void)close(connection); return;
+    }
+    request[(size_t)length] = '\0'; root = json_tokener_parse(request);
+    if (root == NULL || !json_object_object_get_ex(root, "version", &value) ||
+        json_object_get_int(value) != 1 ||
+        !json_object_object_get_ex(root, "operation", &value) ||
+        strcmp(json_object_get_string(value), "signal") != 0 ||
+        !json_object_object_get_ex(root, "signal", &value)) goto invalid;
+    signal_number = json_object_get_int(value);
+    if (signal_number <= 0 || signal_number >= NSIG) goto invalid;
+    if (signal_number == SIGKILL) {
+        char kill_path[4096]; int descriptor = -1;
+        if (snprintf(kill_path, sizeof(kill_path), "%s/cgroup.kill", cgroup->payload) > 0)
+            descriptor = open(kill_path, O_WRONLY | O_CLOEXEC);
+        if (descriptor < 0 || write(descriptor, "1", 1U) != 1) {
+            if (descriptor >= 0) (void)close(descriptor);
+            control_reply(connection, 0, "cgroup kill failed"); goto done;
+        }
+        (void)close(descriptor);
+    } else if (syscall(SYS_pidfd_send_signal, pidfd, signal_number, NULL, 0U) != 0) {
+        control_reply(connection, 0, "pidfd signal failed"); goto done;
+    }
+    control_reply(connection, 1, "signal delivered"); goto done;
+invalid:
+    control_reply(connection, 0, "invalid request");
+done:
+    json_object_put(root); (void)close(connection);
 }
 
 static int write_text(const char *path, const char *value) {
@@ -519,13 +628,17 @@ static void cleanup_ephemeral(const struct runtime_paths *paths) {
 }
 
 static int write_state(const struct runtime_paths *paths, const struct mc_run_config *config,
-                       const struct mc_cgroup *cgroup, const char *state, pid_t init_pid, int exit_code,
+                       const struct mc_cgroup *cgroup, const struct namespace_identity *namespaces,
+                       const char *state, pid_t init_pid, int exit_code,
                        struct mc_error *error) {
-    char document[1024];
+    char document[2048];
     char stat_path[64];
     char stat_line[4096];
     unsigned long long start_time = 0ULL;
+    unsigned long long init_start_time = 0ULL;
     FILE *stat_stream;
+    struct timespec now;
+    (void)clock_gettime(CLOCK_REALTIME, &now);
     (void)snprintf(stat_path, sizeof(stat_path), "/proc/%ld/stat", (long)getpid());
     stat_stream = fopen(stat_path, "r");
     if (stat_stream != NULL && fgets(stat_line, sizeof(stat_line), stat_stream) != NULL) {
@@ -536,20 +649,43 @@ static int write_state(const struct runtime_paths *paths, const struct mc_run_co
         if (token != NULL) start_time = strtoull(token, NULL, 10);
     }
     if (stat_stream != NULL) (void)fclose(stat_stream);
+    if (init_pid > 0) {
+        (void)snprintf(stat_path, sizeof(stat_path), "/proc/%ld/stat", (long)init_pid);
+        stat_stream = fopen(stat_path, "r");
+        if (stat_stream != NULL && fgets(stat_line, sizeof(stat_line), stat_stream) != NULL) {
+            char *token = strrchr(stat_line, ')');
+            int field = 3;
+            if (token != NULL) token = strtok(token + 2, " ");
+            while (token != NULL && field < 22) { token = strtok(NULL, " "); ++field; }
+            if (token != NULL) init_start_time = strtoull(token, NULL, 10);
+        }
+        if (stat_stream != NULL) (void)fclose(stat_stream);
+    }
     const int length = snprintf(document, sizeof(document),
                                 "{\"schema_version\":1,\"id\":\"%s\","
                                 "\"status\":\"%s\",\"shim_pid\":%ld,"
                                 "\"shim_start_time\":%llu,"
                                 "\"init_pid\":%ld,\"exit_code\":%d,"
+                                "\"init_start_time\":%llu,"
                                 "\"resources\":{\"memory_max\":%llu,\"swap_max\":%llu,"
                                 "\"cpu_quota\":%llu,\"cpu_period\":100000,\"pids_max\":%llu},"
+                                "\"namespaces\":{\"user\":%llu,\"pid\":%llu,\"mount\":%llu,"
+                                "\"uts\":%llu,\"ipc\":%llu,\"network\":%llu,\"cgroup\":%llu},"
+                                "\"updated_at_unix_ns\":%llu,\"build_version\":\"%s\","
+                                "\"git_commit\":\"%s\","
                                 "\"cgroup_path\":\"%s\"}\n",
                                 config->id, state, (long)getpid(), start_time,
-                                (long)init_pid, exit_code,
+                                (long)init_pid, exit_code, init_start_time,
                                 (unsigned long long)config->memory_max,
                                 (unsigned long long)config->swap_max,
                                 (unsigned long long)config->cpu_quota,
                                 (unsigned long long)config->pids_max,
+                                namespaces->user, namespaces->pid, namespaces->mount,
+                                namespaces->uts, namespaces->ipc, namespaces->network,
+                                namespaces->cgroup,
+                                ((unsigned long long)now.tv_sec * UINT64_C(1000000000)) +
+                                    (unsigned long long)now.tv_nsec,
+                                MC_VERSION, MC_GIT_COMMIT,
                                 cgroup->payload[0] != '\0' ? cgroup->payload : "");
     if (length < 0 || (size_t)length >= sizeof(document)) {
         mc_error_set(error, MC_EXIT_INTERNAL, EOVERFLOW, "write-state", config->id,
@@ -564,11 +700,13 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     uint32_t subordinate_gid;
     struct runtime_paths paths;
     struct mc_cgroup cgroup;
+    struct namespace_identity namespaces = {0};
     int barrier[2];
     int ready[2];
     struct child_context child_context;
     struct clone_args clone_arguments;
     int pidfd = -1;
+    int control_listener = -1;
     pid_t child;
     int status;
     struct sigaction previous[4];
@@ -663,14 +801,20 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     } while (ready_count < 0 && errno == EINTR);
     (void)close(ready[0]);
     if (ready_count == 1 && ready_byte == '1') {
-        if (write_state(&paths, config, &cgroup, "running", child, 0, error) != 0) {
+        capture_namespaces(child, &namespaces);
+        control_listener = open_control_socket(&paths, error);
+        if (control_listener < 0 ||
+            write_state(&paths, config, &cgroup, &namespaces, "running", child, 0, error) != 0) {
             (void)kill(child, SIGKILL);
+            ready_count = 0;
         }
-        if (config->ready_fd >= 0) {
+        if (config->ready_fd >= 0 && ready_count == 1) {
             if (write(config->ready_fd, "1", 1U) != 1) {
                 (void)kill(child, SIGKILL);
                 ready_count = 0;
             }
+            (void)close(config->ready_fd);
+        } else if (config->ready_fd >= 0) {
             (void)close(config->ready_fd);
         }
     } else if (config->ready_fd >= 0) {
@@ -682,14 +826,24 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     } else {
         forwarders_installed = 1;
     }
-    while (waitpid(child, &status, 0) < 0) {
-        if (errno == EINTR) {
-            continue;
+    for (;;) {
+        const pid_t waited = waitpid(child, &status, WNOHANG);
+        if (waited == child) break;
+        if (waited < 0 && errno != EINTR) {
+            mc_error_set(error, MC_EXIT_RUNTIME, errno, "wait-container", config->id,
+                         "cannot wait for container init");
+            status = -1;
+            break;
         }
-        mc_error_set(error, MC_EXIT_RUNTIME, errno, "wait-container", config->id,
-                     "cannot wait for container init");
-        status = -1;
-        break;
+        if (control_listener >= 0) {
+            struct pollfd descriptors[2];
+            descriptors[0].fd = pidfd; descriptors[0].events = POLLIN;
+            descriptors[1].fd = control_listener; descriptors[1].events = POLLIN;
+            if (poll(descriptors, 2U, 1000) > 0 && (descriptors[1].revents & POLLIN) != 0)
+                handle_control(control_listener, pidfd, &cgroup);
+        } else {
+            (void)usleep(10000U);
+        }
     }
     if (forwarders_installed != 0) {
         restore_forwarders(previous);
@@ -699,6 +853,9 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     if (pidfd >= 0) {
         (void)close(pidfd);
     }
+    if (control_listener >= 0) (void)close(control_listener);
+    (void)unlink(paths.control);
+    (void)rmdir(paths.runtime);
     mc_cgroup_destroy(&cgroup);
     if (status >= 0 && WIFEXITED(status)) {
         exit_code = WEXITSTATUS(status);
@@ -713,7 +870,8 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
                      "cannot restore state directory ownership");
     }
     (void)chmod(paths.base, 0700);
-    (void)write_state(&paths, config, &cgroup, ready_count == 1 ? "stopped" : "failed",
+    (void)write_state(&paths, config, &cgroup, &namespaces,
+                      ready_count == 1 ? "stopped" : "failed",
                       child, exit_code, error);
     if (status < 0) {
         return -1;

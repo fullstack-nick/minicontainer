@@ -15,6 +15,9 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
 static int make_path(char *output, size_t size, const char *id, const char *leaf) {
@@ -82,16 +85,31 @@ static json_object *config_json(const struct mc_run_config *config, const char *
     json_object *environment = json_object_new_array();
     json_object *command = json_object_new_array();
     size_t index;
+    struct timespec now;
+    const char *digest = strstr(config->rootfs, "/sha256/");
+    (void)clock_gettime(CLOCK_REALTIME, &now);
     if (root == NULL || resources == NULL || environment == NULL || command == NULL) goto fail;
     json_object_object_add(root, "schema_version", json_object_new_int(1));
     json_object_object_add(root, "id", json_object_new_string(config->id));
     if (config->name != NULL) json_object_object_add(root, "name", json_object_new_string(config->name));
     json_object_object_add(root, "image", json_object_new_string(image));
+    if (digest != NULL) {
+        char value[65];
+        digest += strlen("/sha256/");
+        if (strlen(digest) >= 64U) {
+            (void)memcpy(value, digest, 64U); value[64] = '\0';
+            json_object_object_add(root, "image_digest", json_object_new_string(value));
+        }
+    }
     json_object_object_add(root, "rootfs", json_object_new_string(config->rootfs));
     json_object_object_add(root, "hostname", json_object_new_string(config->hostname));
     json_object_object_add(root, "workdir", json_object_new_string(config->workdir));
     json_object_object_add(root, "user", json_object_new_int64((int64_t)config->user));
     json_object_object_add(root, "group", json_object_new_int64((int64_t)config->group));
+    json_object_object_add(root, "created_at_unix_ns", json_object_new_uint64(
+        ((uint64_t)now.tv_sec * UINT64_C(1000000000)) + (uint64_t)now.tv_nsec));
+    json_object_object_add(root, "build_version", json_object_new_string(MC_VERSION));
+    json_object_object_add(root, "git_commit", json_object_new_string(MC_GIT_COMMIT));
     json_object_object_add(resources, "memory_max", json_object_new_uint64(config->memory_max));
     json_object_object_add(resources, "swap_max", json_object_new_uint64(config->swap_max));
     json_object_object_add(resources, "cpu_quota", json_object_new_uint64(config->cpu_quota));
@@ -167,7 +185,8 @@ int mc_state_mark_created(const char *id, struct mc_error *error) {
                                 "{\"schema_version\":1,\"id\":\"%s\","
                                 "\"status\":\"created\",\"shim_pid\":0,"
                                 "\"shim_start_time\":0,"
-                                "\"init_pid\":0,\"exit_code\":0,\"cgroup_path\":\"\"}\n",
+                                "\"init_pid\":0,\"init_start_time\":0,"
+                                "\"exit_code\":0,\"cgroup_path\":\"\"}\n",
                                 id);
     if (length < 0 || (size_t)length >= sizeof(document) ||
         make_path(path, sizeof(path), id, "state.json") != 0) {
@@ -402,11 +421,13 @@ static unsigned long long process_start_time(pid_t pid) {
 
 int mc_state_signal(const char *reference, int signal_number, struct mc_error *error) {
     char id[33], path[PATH_MAX];
-    char cgroup_path[PATH_MAX] = "";
+    char socket_path[PATH_MAX], request[128], response[256];
+    struct sockaddr_un address;
     json_object *root = NULL, *value;
     pid_t pid;
     unsigned long long saved_start;
-    int pidfd;
+    int connection;
+    ssize_t response_length;
     if (mc_state_resolve(reference, id, error) != 0 ||
         make_path(path, sizeof(path), id, "state.json") != 0 ||
         (root = json_object_from_file(path)) == NULL ||
@@ -419,44 +440,139 @@ int mc_state_signal(const char *reference, int signal_number, struct mc_error *e
         return -1;
     }
     pid = (pid_t)json_object_get_int64(value);
-    if (json_object_object_get_ex(root, "cgroup_path", &value))
-        (void)snprintf(cgroup_path, sizeof(cgroup_path), "%s", json_object_get_string(value));
     if (!json_object_object_get_ex(root, "shim_start_time", &value)) {
         json_object_put(root); goto stale;
     }
     saved_start = json_object_get_uint64(value);
     json_object_put(root);
     if (pid <= 0 || saved_start == 0ULL || process_start_time(pid) != saved_start) goto stale;
-    if (signal_number == SIGKILL) {
-        char kill_path[PATH_MAX];
-        int descriptor = -1;
-        const int length = snprintf(kill_path, sizeof(kill_path), "%s/cgroup.kill", cgroup_path);
-        if (length < 0 || (size_t)length >= sizeof(kill_path) ||
-            strncmp(cgroup_path, "/sys/fs/cgroup/", 15U) != 0 ||
-            strstr(cgroup_path, id) == NULL ||
-            (descriptor = open(kill_path, O_WRONLY | O_CLOEXEC)) < 0 ||
-            write(descriptor, "1", 1U) != 1) {
-            const int saved = errno;
-            if (descriptor >= 0) (void)close(descriptor);
-            mc_error_set(error, MC_EXIT_RUNTIME, saved, "kill-container", id,
-                         "cannot terminate payload cgroup");
-            return -1;
-        }
-        (void)close(descriptor);
-        return 0;
-    }
-    pidfd = (int)syscall(SYS_pidfd_open, pid, 0U);
-    if (pidfd < 0 || syscall(SYS_pidfd_send_signal, pidfd, signal_number, NULL, 0U) != 0) {
+    if (snprintf(socket_path, sizeof(socket_path), "%s/%s/control.sock", mc_runtime_dir(), id) < 0 ||
+        strlen(socket_path) >= sizeof(address.sun_path) ||
+        snprintf(request, sizeof(request),
+                 "{\"version\":1,\"operation\":\"signal\",\"signal\":%d}",
+                 signal_number) < 0) goto stale;
+    connection = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+    (void)memset(&address, 0, sizeof(address)); address.sun_family = AF_UNIX;
+    (void)memcpy(address.sun_path, socket_path, strlen(socket_path) + 1U);
+    if (connection < 0 || connect(connection, (const struct sockaddr *)&address, sizeof(address)) != 0 ||
+        send(connection, request, strlen(request), MSG_NOSIGNAL) != (ssize_t)strlen(request) ||
+        (response_length = recv(connection, response, sizeof(response) - 1U, 0)) <= 0) {
         const int saved = errno;
-        if (pidfd >= 0) (void)close(pidfd);
+        if (connection >= 0) (void)close(connection);
         mc_error_set(error, MC_EXIT_RUNTIME, saved, "signal-container", id,
-                     "pidfd signal delivery failed");
+                     "shim control request failed");
         return -1;
     }
-    (void)close(pidfd);
+    (void)close(connection); response[(size_t)response_length] = '\0';
+    if (strstr(response, "\"ok\":true") == NULL) {
+        mc_error_set(error, MC_EXIT_RUNTIME, EIO, "signal-container", id,
+                     "shim rejected control request"); return -1;
+    }
     return 0;
 stale:
     mc_error_set(error, MC_EXIT_CONFLICT, ESRCH, "signal-container", id,
                  "recorded shim identity is stale");
     return -1;
+}
+
+int mc_state_runtime(const char *reference, char id[33], pid_t *init_pid,
+                     unsigned long long *init_start_time, char cgroup[PATH_MAX],
+                     struct mc_error *error) {
+    char path[PATH_MAX];
+    json_object *root = NULL, *value;
+    if (mc_state_resolve(reference, id, error) != 0 ||
+        make_path(path, sizeof(path), id, "state.json") != 0 ||
+        (root = json_object_from_file(path)) == NULL ||
+        !json_object_object_get_ex(root, "status", &value) ||
+        strcmp(json_object_get_string(value), "running") != 0 ||
+        !json_object_object_get_ex(root, "init_pid", &value)) goto unavailable;
+    *init_pid = (pid_t)json_object_get_int64(value);
+    if (!json_object_object_get_ex(root, "init_start_time", &value)) goto unavailable;
+    *init_start_time = json_object_get_uint64(value);
+    if (!json_object_object_get_ex(root, "cgroup_path", &value) ||
+        snprintf(cgroup, PATH_MAX, "%s", json_object_get_string(value)) < 0) goto unavailable;
+    json_object_put(root);
+    if (*init_pid <= 0 || *init_start_time == 0ULL ||
+        process_start_time(*init_pid) != *init_start_time) goto stale_runtime;
+    return 0;
+unavailable:
+    json_object_put(root);
+stale_runtime:
+    mc_error_set(error, MC_EXIT_CONFLICT, ESRCH, "runtime-identity", reference,
+                 "container runtime identity is unavailable or stale");
+    return -1;
+}
+
+static void remove_ephemeral_paths(const char *id) {
+    char path[PATH_MAX];
+    const char *leaves[] = {"work", "merged"};
+    size_t index;
+    for (index = 0U; index < sizeof(leaves) / sizeof(leaves[0]); ++index) {
+        if (make_path(path, sizeof(path), id, leaves[index]) == 0) {
+            (void)chmod(path, 0700);
+            (void)nftw(path, remove_tree_entry, 32, FTW_DEPTH | FTW_PHYS);
+        }
+    }
+    if (snprintf(path, sizeof(path), "%s/%s/control.sock", mc_runtime_dir(), id) > 0)
+        (void)unlink(path);
+    if (snprintf(path, sizeof(path), "%s/%s", mc_runtime_dir(), id) > 0)
+        (void)rmdir(path);
+}
+
+int mc_state_reconcile(int verbose, struct mc_error *error) {
+    char directory[PATH_MAX];
+    DIR *stream;
+    struct dirent *entry;
+    int repaired = 0;
+    if (snprintf(directory, sizeof(directory), "%s/containers", mc_state_dir()) < 0 ||
+        (stream = opendir(directory)) == NULL) {
+        if (errno == ENOENT) return 0;
+        mc_error_set(error, MC_EXIT_RUNTIME, errno, "reconcile", directory,
+                     "cannot read container registry"); return -1;
+    }
+    while ((entry = readdir(stream)) != NULL) {
+        char path[PATH_MAX];
+        json_object *root, *value;
+        pid_t shim_pid;
+        unsigned long long start_time;
+        const char *document;
+        if (entry->d_name[0] == '.' || strlen(entry->d_name) != 32U ||
+            make_path(path, sizeof(path), entry->d_name, "state.json") != 0) continue;
+        root = json_object_from_file(path);
+        if (root == NULL || !json_object_object_get_ex(root, "status", &value) ||
+            strcmp(json_object_get_string(value), "running") != 0) {
+            json_object_put(root); continue;
+        }
+        if (!json_object_object_get_ex(root, "shim_pid", &value)) { json_object_put(root); continue; }
+        shim_pid = (pid_t)json_object_get_int64(value);
+        if (!json_object_object_get_ex(root, "shim_start_time", &value)) { json_object_put(root); continue; }
+        start_time = json_object_get_uint64(value);
+        if (shim_pid > 0 && start_time > 0ULL && process_start_time(shim_pid) == start_time) {
+            json_object_put(root); continue;
+        }
+        if (json_object_object_get_ex(root, "cgroup_path", &value)) {
+            char kill_path[PATH_MAX];
+            const char *cgroup = json_object_get_string(value);
+            int descriptor = -1;
+            if (strncmp(cgroup, "/sys/fs/cgroup/", 15U) == 0 &&
+                strstr(cgroup, entry->d_name) != NULL &&
+                snprintf(kill_path, sizeof(kill_path), "%s/cgroup.kill", cgroup) > 0)
+                descriptor = open(kill_path, O_WRONLY | O_CLOEXEC);
+            if (descriptor >= 0) { (void)write(descriptor, "1", 1U); (void)close(descriptor); }
+        }
+        json_object_object_add(root, "status", json_object_new_string("stopped"));
+        json_object_object_add(root, "shim_pid", json_object_new_int(0));
+        json_object_object_add(root, "init_pid", json_object_new_int(0));
+        json_object_object_add(root, "exit_code", json_object_new_int(125));
+        json_object_object_add(root, "cgroup_path", json_object_new_string(""));
+        document = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+        if (mc_write_atomic(path, document, strlen(document), 0600, error) != 0) {
+            json_object_put(root); (void)closedir(stream); return -1;
+        }
+        json_object_put(root); remove_ephemeral_paths(entry->d_name); ++repaired;
+        if (verbose != 0) (void)printf("reconciled %.12s stale-running -> stopped\n", entry->d_name);
+    }
+    (void)closedir(stream);
+    if (verbose != 0) (void)printf("reconciled=%d\n", repaired);
+    return 0;
 }

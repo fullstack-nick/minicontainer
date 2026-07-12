@@ -19,6 +19,11 @@ const char *mc_log_dir(void) {
     return override == NULL || override[0] == '\0' ? "/var/log/minicontainer" : override;
 }
 
+const char *mc_runtime_dir(void) {
+    const char *override = getenv("MC_RUNTIME_DIR");
+    return override == NULL || override[0] == '\0' ? "/run/minicontainer" : override;
+}
+
 int mc_mkdir_p(const char *path, mode_t mode, struct mc_error *error) {
     char copy[PATH_MAX];
     char *cursor;

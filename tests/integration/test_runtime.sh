@@ -18,6 +18,7 @@ cleanup() {
 trap cleanup EXIT
 export MC_STATE_DIR="$workspace/state"
 export MC_SHIM_PATH="$shim"
+export MC_RUNTIME_DIR="$workspace/run"
 export MC_LOG_DIR="$workspace/logs"
 
 "$binary" image import alpine-runtime "$archive" > /dev/null

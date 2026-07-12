@@ -17,6 +17,7 @@ add_library(minicontainer_core STATIC
   src/image/import.c
   src/linux/cgroup.c
   src/linux/container.c
+  src/linux/exec.c
   src/linux/stats.c
   src/runtime/launch.c
   src/runtime/info.c
@@ -31,6 +32,9 @@ target_include_directories(minicontainer_core PUBLIC include)
 target_link_libraries(minicontainer_core PUBLIC PkgConfig::LIBARCHIVE PkgConfig::OPENSSL
   PkgConfig::SYSTEMD PkgConfig::JSONC)
 target_compile_definitions(minicontainer_core PRIVATE _GNU_SOURCE _XOPEN_SOURCE=700)
+target_compile_definitions(minicontainer_core PRIVATE
+  MC_VERSION="${PROJECT_VERSION}"
+  MC_GIT_COMMIT="${MC_GIT_COMMIT}")
 
 add_executable(minicontainer src/cli/main.c)
 target_link_libraries(minicontainer PRIVATE minicontainer_core)

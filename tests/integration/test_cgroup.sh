@@ -21,6 +21,7 @@ trap cleanup EXIT
 export MC_STATE_DIR="$workspace/state"
 export MC_LOG_DIR="$workspace/logs"
 export MC_SHIM_PATH="$shim"
+export MC_RUNTIME_DIR="$workspace/run"
 
 "$binary" image import alpine-cgroup "$archive" >/dev/null
 digest="$(sed 's/^sha256://' "$MC_STATE_DIR/images/names/alpine-cgroup")"

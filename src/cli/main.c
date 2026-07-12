@@ -1,5 +1,6 @@
 #include "minicontainer/info.h"
 #include "minicontainer/error.h"
+#include "minicontainer/exec.h"
 #include "minicontainer/fs.h"
 #include "minicontainer/image.h"
 #include "minicontainer/id.h"
@@ -39,9 +40,11 @@ static void usage(FILE *stream) {
                   "  minicontainer stop [--time SECONDS] ID\n"
                   "  minicontainer kill [--signal SIGNAL] ID\n"
                   "  minicontainer rm [--force] ID\n"
+                  "  minicontainer exec ID -- COMMAND [ARG...]\n"
+                  "  minicontainer gc\n"
                   "  minicontainer ps [--all] [--json]\n"
                   "  minicontainer inspect ID\n"
-                  "  minicontainer logs ID\n"
+                  "  minicontainer logs [--follow] [--tail LINES] ID\n"
                   "  minicontainer stats [--no-stream] [--json] ID...\n");
 }
 
@@ -63,6 +66,49 @@ static int show_file(const char *path, const char *operation) {
     if (ferror(stream) != 0) {
         (void)fclose(stream);
         return MC_EXIT_RUNTIME;
+    }
+    (void)fclose(stream);
+    return MC_EXIT_OK;
+}
+
+static int show_log(const char *path, const char *id, long tail, int follow) {
+    FILE *stream = fopen(path, "r");
+    char *line = NULL;
+    size_t capacity = 0U;
+    char **ring = NULL;
+    size_t count = 0U, next = 0U, index;
+    if (stream == NULL) return show_file(path, "logs");
+    if (tail >= 0) {
+        ring = calloc((size_t)(tail == 0 ? 1 : tail), sizeof(*ring));
+        if (ring == NULL) { (void)fclose(stream); return MC_EXIT_INTERNAL; }
+    }
+    while (getline(&line, &capacity, stream) >= 0) {
+        if (tail < 0) (void)fputs(line, stdout);
+        else if (tail > 0) {
+            free(ring[next]); ring[next] = strdup(line);
+            if (ring[next] == NULL) { free(line); (void)fclose(stream); return MC_EXIT_INTERNAL; }
+            next = (next + 1U) % (size_t)tail;
+            if (count < (size_t)tail) ++count;
+        }
+    }
+    if (tail > 0) {
+        const size_t start = count == (size_t)tail ? next : 0U;
+        for (index = 0U; index < count; ++index)
+            (void)fputs(ring[(start + index) % (size_t)tail], stdout);
+    }
+    for (index = 0U; ring != NULL && index < (size_t)(tail > 0 ? tail : 1); ++index) free(ring[index]);
+    free(ring); free(line);
+    while (follow != 0) {
+        char status[16];
+        clearerr(stream);
+        line = NULL; capacity = 0U;
+        if (getline(&line, &capacity, stream) >= 0) {
+            (void)fputs(line, stdout); (void)fflush(stdout); free(line); continue;
+        }
+        free(line);
+        if (mc_state_get_status(id, status, NULL, &(struct mc_error){0}) != 0 ||
+            strcmp(status, "running") != 0) break;
+        (void)usleep(100000U);
     }
     (void)fclose(stream);
     return MC_EXIT_OK;
@@ -104,14 +150,26 @@ int main(int argc, char **argv) {
             else if (strcmp(argv[index], "--json") == 0) json = 1;
             else { usage(stderr); return MC_EXIT_USAGE; }
         }
-        if (mc_state_print_list(include_stopped, json, &error) != 0) {
+        if ((geteuid() == 0 && mc_state_reconcile(0, &error) != 0) ||
+            mc_state_print_list(include_stopped, json, &error) != 0) {
             mc_error_print(&error, json); return error.code;
         }
         return MC_EXIT_OK;
     }
+    if (strcmp(argv[1], "gc") == 0 && argc == 2) {
+        struct mc_state_lock registry = {-1};
+        if (geteuid() != 0) return MC_EXIT_PERMISSION;
+        if (mc_state_registry_lock(&registry, &error) != 0 ||
+            mc_state_reconcile(1, &error) != 0) {
+            mc_error_print(&error, 0); mc_state_unlock(&registry); return error.code;
+        }
+        mc_state_unlock(&registry); return MC_EXIT_OK;
+    }
     if (strcmp(argv[1], "kill") == 0 && (argc == 3 || argc == 5)) {
         int signal_number = SIGKILL;
         const char *reference = argv[argc - 1];
+        char resolved[33];
+        struct mc_state_lock registry = {-1}, container = {-1};
         if (argc == 5) {
             const char *value;
             if (strcmp(argv[2], "--signal") != 0) { usage(stderr); return MC_EXIT_USAGE; }
@@ -123,32 +181,46 @@ int main(int argc, char **argv) {
             else if (strcmp(value, "QUIT") == 0 || strcmp(value, "SIGQUIT") == 0) signal_number = SIGQUIT;
             else { usage(stderr); return MC_EXIT_USAGE; }
         }
-        if (mc_state_signal(reference, signal_number, &error) != 0) {
-            mc_error_print(&error, 0); return error.code;
+        if (mc_state_registry_lock(&registry, &error) != 0 ||
+            mc_state_resolve(reference, resolved, &error) != 0 ||
+            mc_state_container_lock(resolved, &container, &error) != 0 ||
+            mc_state_signal(resolved, signal_number, &error) != 0) {
+            mc_error_print(&error, 0); mc_state_unlock(&container);
+            mc_state_unlock(&registry); return error.code;
         }
+        mc_state_unlock(&container); mc_state_unlock(&registry);
         return MC_EXIT_OK;
     }
     if (strcmp(argv[1], "stop") == 0 && (argc == 3 || argc == 5)) {
         uint64_t timeout_seconds = 10U;
         const char *reference = argv[argc - 1];
         char resolved[33], status[16];
+        struct mc_state_lock registry = {-1}, container = {-1};
         unsigned int attempt;
         if (argc == 5 && (strcmp(argv[2], "--time") != 0 ||
             !mc_parse_positive_u64(argv[3], UINT64_C(3600), &timeout_seconds))) {
             usage(stderr); return MC_EXIT_USAGE;
         }
-        if (mc_state_resolve(reference, resolved, &error) != 0 ||
+        if (mc_state_registry_lock(&registry, &error) != 0 ||
+            mc_state_resolve(reference, resolved, &error) != 0 ||
+            mc_state_container_lock(resolved, &container, &error) != 0 ||
             mc_state_signal(resolved, SIGTERM, &error) != 0) {
-            mc_error_print(&error, 0); return error.code;
+            mc_error_print(&error, 0); mc_state_unlock(&container);
+            mc_state_unlock(&registry); return error.code;
         }
+        mc_state_unlock(&container); mc_state_unlock(&registry);
         for (attempt = 0U; attempt < (unsigned int)(timeout_seconds * 10U); ++attempt) {
             if (mc_state_get_status(resolved, status, NULL, &error) == 0 &&
                 strcmp(status, "running") != 0) return MC_EXIT_OK;
             (void)usleep(100000U);
         }
-        if (mc_state_signal(resolved, SIGKILL, &error) != 0) {
-            mc_error_print(&error, 0); return error.code;
+        if (mc_state_registry_lock(&registry, &error) != 0 ||
+            mc_state_container_lock(resolved, &container, &error) != 0 ||
+            mc_state_signal(resolved, SIGKILL, &error) != 0) {
+            mc_error_print(&error, 0); mc_state_unlock(&container);
+            mc_state_unlock(&registry); return error.code;
         }
+        mc_state_unlock(&container); mc_state_unlock(&registry);
         return MC_EXIT_OK;
     }
     if (strcmp(argv[1], "rm") == 0 && (argc == 3 || argc == 4)) {
@@ -162,6 +234,7 @@ int main(int argc, char **argv) {
         }
         reference = argv[argc - 1];
         if (mc_state_registry_lock(&registry, &error) != 0 ||
+            mc_state_reconcile(0, &error) != 0 ||
             mc_state_resolve(reference, resolved, &error) != 0 ||
             mc_state_container_lock(resolved, &container, &error) != 0 ||
             mc_state_get_status(resolved, status, NULL, &error) != 0) goto rm_error;
@@ -192,6 +265,11 @@ rm_error:
         mc_error_print(&error, 0); mc_state_unlock(&container); mc_state_unlock(&registry);
         return error.code;
     }
+    if (strcmp(argv[1], "exec") == 0 && argc >= 5 && strcmp(argv[3], "--") == 0) {
+        const int result = mc_exec_container(argv[2], &argv[4], &error);
+        if (result < 0) { mc_error_print(&error, 0); return error.code; }
+        return result;
+    }
     if (strcmp(argv[1], "start") == 0 && argc == 3) {
         struct mc_run_config stored = {0};
         struct mc_state_lock registry = {-1};
@@ -201,6 +279,7 @@ rm_error:
         int result;
         if (geteuid() != 0) return MC_EXIT_PERMISSION;
         if (mc_state_registry_lock(&registry, &error) != 0 ||
+            mc_state_reconcile(0, &error) != 0 ||
             mc_state_load_config(argv[2], &stored, image, &error) != 0 ||
             mc_state_container_lock(stored.id, &container, &error) != 0 ||
             mc_state_get_status(stored.id, status, NULL, &error) != 0) {
@@ -246,25 +325,43 @@ rm_error:
         } while (no_stream == 0);
         return MC_EXIT_OK;
     }
-    if ((strcmp(argv[1], "logs") == 0 || strcmp(argv[1], "inspect") == 0) && argc == 3) {
+    if (strcmp(argv[1], "logs") == 0 && argc >= 3) {
         char path[PATH_MAX];
         char resolved[33];
-        const char *kind = argv[1];
+        const char *reference = argv[argc - 1];
+        long tail = -1L;
+        int follow = 0;
+        int index;
         int length;
-        if (mc_state_resolve(argv[2], resolved, &error) != 0) {
+        for (index = 2; index < argc - 1; ++index) {
+            if (strcmp(argv[index], "--follow") == 0) follow = 1;
+            else if (strcmp(argv[index], "--tail") == 0 && index + 1 < argc - 1) {
+                char *end = NULL; errno = 0; tail = strtol(argv[++index], &end, 10);
+                if (errno != 0 || end == argv[index] || *end != '\0' || tail < 0) {
+                    usage(stderr); return MC_EXIT_USAGE;
+                }
+            } else { usage(stderr); return MC_EXIT_USAGE; }
+        }
+        if (mc_state_resolve(reference, resolved, &error) != 0) {
             mc_error_print(&error, 0);
             return error.code;
         }
-        if (strcmp(kind, "logs") == 0) {
-            length = snprintf(path, sizeof(path), "%s/%s/container.log", mc_log_dir(), resolved);
-        } else {
-            length = snprintf(path, sizeof(path), "%s/containers/%s/state.json", mc_state_dir(),
-                              resolved);
-        }
+        length = snprintf(path, sizeof(path), "%s/%s/container.log", mc_log_dir(), resolved);
         if (length < 0 || (size_t)length >= sizeof(path)) {
             return MC_EXIT_USAGE;
         }
-        return show_file(path, kind);
+        return show_log(path, resolved, tail, follow);
+    }
+    if (strcmp(argv[1], "inspect") == 0 &&
+        (argc == 3 || (argc == 4 && strcmp(argv[3], "--json") == 0))) {
+        char path[PATH_MAX], resolved[33];
+        int length;
+        if (mc_state_resolve(argv[2], resolved, &error) != 0) {
+            mc_error_print(&error, 0); return error.code;
+        }
+        length = snprintf(path, sizeof(path), "%s/containers/%s/state.json", mc_state_dir(), resolved);
+        if (length < 0 || (size_t)length >= sizeof(path)) return MC_EXIT_USAGE;
+        return show_file(path, "inspect");
     }
     if (strcmp(argv[1], "image") == 0 && argc >= 3 && strcmp(argv[2], "import") == 0) {
         struct mc_image_result imported;
@@ -426,6 +523,7 @@ rm_error:
             struct mc_state_lock registry = {-1};
             struct mc_state_lock container = {-1};
             if (mc_state_registry_lock(&registry, &error) != 0 ||
+                mc_state_reconcile(0, &error) != 0 ||
                 mc_state_container_lock(id, &container, &error) != 0 ||
                 mc_state_save_config(&config, image, &error) != 0 ||
                 (create_only != 0 && mc_state_mark_created(id, &error) != 0)) {

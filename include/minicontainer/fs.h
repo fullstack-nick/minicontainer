@@ -11,5 +11,6 @@ int mc_write_atomic(const char *path, const void *data, size_t length, mode_t mo
                     struct mc_error *error);
 const char *mc_state_dir(void);
 const char *mc_log_dir(void);
+const char *mc_runtime_dir(void);
 
 #endif
