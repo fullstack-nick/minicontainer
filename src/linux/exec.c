@@ -77,7 +77,7 @@ static int exec_worker(struct namespace_set *set, const char *cgroup,
                        const struct mc_run_config *config, char **command) {
     pid_t child;
     int status;
-    if (move_to_cgroup(cgroup) != 0) {
+    if (getenv("MC_SKIP_CGROUP") == NULL && move_to_cgroup(cgroup) != 0) {
         (void)fprintf(stderr, "minicontainer-exec: cgroup: %s\n", strerror(errno)); return 125;
     }
 #define ENTER(fd, kind, label) do { if (setns((fd), (kind)) != 0) { \

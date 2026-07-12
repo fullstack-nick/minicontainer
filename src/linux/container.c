@@ -216,14 +216,18 @@ static void handle_control(int listener, int pidfd, const struct mc_cgroup *cgro
     signal_number = json_object_get_int(value);
     if (signal_number <= 0 || signal_number >= NSIG) goto invalid;
     if (signal_number == SIGKILL) {
-        char kill_path[4096]; int descriptor = -1;
-        if (snprintf(kill_path, sizeof(kill_path), "%s/cgroup.kill", cgroup->payload) > 0)
-            descriptor = open(kill_path, O_WRONLY | O_CLOEXEC);
-        if (descriptor < 0 || write(descriptor, "1", 1U) != 1) {
-            if (descriptor >= 0) (void)close(descriptor);
-            control_reply(connection, 0, "cgroup kill failed"); goto done;
+        if (cgroup->active != 0) {
+            char kill_path[4096]; int descriptor = -1;
+            if (snprintf(kill_path, sizeof(kill_path), "%s/cgroup.kill", cgroup->payload) > 0)
+                descriptor = open(kill_path, O_WRONLY | O_CLOEXEC);
+            if (descriptor < 0 || write(descriptor, "1", 1U) != 1) {
+                if (descriptor >= 0) (void)close(descriptor);
+                control_reply(connection, 0, "cgroup kill failed"); goto done;
+            }
+            (void)close(descriptor);
+        } else if (syscall(SYS_pidfd_send_signal, pidfd, SIGKILL, NULL, 0U) != 0) {
+            control_reply(connection, 0, "pidfd signal failed"); goto done;
         }
-        (void)close(descriptor);
     } else if (syscall(SYS_pidfd_send_signal, pidfd, signal_number, NULL, 0U) != 0) {
         control_reply(connection, 0, "pidfd signal failed"); goto done;
     }
