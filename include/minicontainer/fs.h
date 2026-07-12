@@ -10,5 +10,6 @@ int mc_mkdir_p(const char *path, mode_t mode, struct mc_error *error);
 int mc_write_atomic(const char *path, const void *data, size_t length, mode_t mode,
                     struct mc_error *error);
 const char *mc_state_dir(void);
+const char *mc_log_dir(void);
 
 #endif

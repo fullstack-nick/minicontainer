@@ -18,6 +18,7 @@ cleanup() {
 trap cleanup EXIT
 export MC_STATE_DIR="$workspace/state"
 export MC_SHIM_PATH="$shim"
+export MC_LOG_DIR="$workspace/logs"
 
 "$binary" image import alpine-runtime "$archive" > /dev/null
 # The single-quoted program is intentionally expanded by the shell inside the container.
@@ -88,4 +89,21 @@ test "$status" -eq 33
 if [[ -d "$workspace/state/containers" ]]; then
   test -z "$(find "$workspace/state/containers" -mindepth 1 -print -quit)"
 fi
+
+detached_id="$("$binary" run --detach --image alpine-runtime -- /bin/sh -c \
+  'echo DETACHED_START; sleep 0.2; echo DETACHED_DONE; exit 7')"
+[[ "$detached_id" =~ ^[0-9a-f]{32}$ ]]
+state_file="$workspace/state/containers/$detached_id/state.json"
+for _ in $(seq 1 100); do
+  grep -q '"status":"stopped"' "$state_file" 2>/dev/null && break
+  sleep 0.05
+done
+grep -q '"status":"stopped"' "$state_file"
+grep -q '"exit_code":7' "$state_file"
+"$binary" inspect "$detached_id" | grep -q '"status":"stopped"'
+"$binary" logs "$detached_id" | grep -q '^DETACHED_START$'
+"$binary" logs "$detached_id" | grep -q '^DETACHED_DONE$'
+test ! -e "$workspace/state/containers/$detached_id/upper"
+test ! -e "$workspace/state/containers/$detached_id/work"
+test ! -e "$workspace/state/containers/$detached_id/merged"
 printf 'PASS isolated foreground runtime and cleanup\n'

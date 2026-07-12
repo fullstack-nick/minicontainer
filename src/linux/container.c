@@ -34,12 +34,14 @@ struct runtime_paths {
     char upper[4096];
     char work[4096];
     char merged[4096];
+    char state[4096];
 };
 
 struct child_context {
     const struct mc_run_config *config;
     const struct runtime_paths *paths;
     int barrier;
+    int ready;
 };
 
 static volatile sig_atomic_t forward_target = -1;
@@ -99,7 +101,8 @@ static int prepare_paths(const char *id, uint32_t uid, uint32_t gid,
         join_path(paths->base, sizeof(paths->base), containers, id) != 0 ||
         join_path(paths->upper, sizeof(paths->upper), paths->base, "upper") != 0 ||
         join_path(paths->work, sizeof(paths->work), paths->base, "work") != 0 ||
-        join_path(paths->merged, sizeof(paths->merged), paths->base, "merged") != 0) {
+        join_path(paths->merged, sizeof(paths->merged), paths->base, "merged") != 0 ||
+        join_path(paths->state, sizeof(paths->state), paths->base, "state.json") != 0) {
         mc_error_set(error, MC_EXIT_USAGE, errno, "prepare-runtime", id,
                      "runtime path is too long");
         return -1;
@@ -440,6 +443,15 @@ static int child_main(const struct child_context *context) {
     if (setup_root(context) != 0) {
         return 125;
     }
+    if (context->config->ready_fd >= 0) {
+        (void)close(context->config->ready_fd);
+    }
+    if (context->ready >= 0) {
+        if (write(context->ready, "1", 1U) != 1) {
+            return 125;
+        }
+        (void)close(context->ready);
+    }
     return supervise(context->config);
 }
 
@@ -457,11 +469,37 @@ static void cleanup_paths(const struct runtime_paths *paths) {
     (void)nftw(paths->base, remove_entry, 32, FTW_DEPTH | FTW_PHYS);
 }
 
+static void cleanup_ephemeral(const struct runtime_paths *paths) {
+    (void)chmod(paths->upper, 0700);
+    (void)chmod(paths->work, 0700);
+    (void)nftw(paths->upper, remove_entry, 32, FTW_DEPTH | FTW_PHYS);
+    (void)nftw(paths->work, remove_entry, 32, FTW_DEPTH | FTW_PHYS);
+    (void)nftw(paths->merged, remove_entry, 32, FTW_DEPTH | FTW_PHYS);
+}
+
+static int write_state(const struct runtime_paths *paths, const struct mc_run_config *config,
+                       const char *state, pid_t init_pid, int exit_code,
+                       struct mc_error *error) {
+    char document[1024];
+    const int length = snprintf(document, sizeof(document),
+                                "{\"schema_version\":1,\"id\":\"%s\","
+                                "\"status\":\"%s\",\"shim_pid\":%ld,"
+                                "\"init_pid\":%ld,\"exit_code\":%d}\n",
+                                config->id, state, (long)getpid(), (long)init_pid, exit_code);
+    if (length < 0 || (size_t)length >= sizeof(document)) {
+        mc_error_set(error, MC_EXIT_INTERNAL, EOVERFLOW, "write-state", config->id,
+                     "state document is too large");
+        return -1;
+    }
+    return mc_write_atomic(paths->state, document, (size_t)length, 0640, error);
+}
+
 int mc_container_run(const struct mc_run_config *config, struct mc_error *error) {
     uint32_t subordinate_uid;
     uint32_t subordinate_gid;
     struct runtime_paths paths;
     int barrier[2];
+    int ready[2];
     struct child_context child_context;
     struct clone_args clone_arguments;
     int pidfd = -1;
@@ -469,6 +507,9 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     int status;
     struct sigaction previous[4];
     int forwarders_installed = 0;
+    char ready_byte;
+    ssize_t ready_count;
+    int exit_code;
 
     if (geteuid() != 0) {
         mc_error_set(error, MC_EXIT_PERMISSION, EPERM, "run", config->id,
@@ -485,7 +526,7 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
         return -1;
     }
     if (prepare_paths(config->id, subordinate_uid, subordinate_gid, &paths, error) != 0 ||
-        pipe2(barrier, O_CLOEXEC) != 0) {
+        pipe2(barrier, O_CLOEXEC) != 0 || pipe2(ready, O_CLOEXEC) != 0) {
         if (error->code == 0) {
             mc_error_set(error, MC_EXIT_RUNTIME, errno, "run", config->id,
                          "cannot create synchronization barrier");
@@ -500,17 +541,21 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     child_context.config = config;
     child_context.paths = &paths;
     child_context.barrier = barrier[0];
+    child_context.ready = ready[1];
     child = (pid_t)syscall(SYS_clone3, &clone_arguments, sizeof(clone_arguments));
     if (child == 0) {
         int result;
         (void)close(barrier[1]);
+        (void)close(ready[0]);
         result = child_main(&child_context);
         _exit(result);
     }
     (void)close(barrier[0]);
+    (void)close(ready[1]);
     if (child < 0) {
         const int saved = errno;
         (void)close(barrier[1]);
+        (void)close(ready[0]);
         cleanup_paths(&paths);
         mc_error_set(error, MC_EXIT_RUNTIME, saved, "clone3", config->id,
                      "cannot create container namespaces");
@@ -522,6 +567,10 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
         (void)kill(child, SIGKILL);
         (void)waitpid(child, NULL, 0);
         (void)close(barrier[1]);
+        (void)close(ready[0]);
+        if (config->ready_fd >= 0) {
+            (void)close(config->ready_fd);
+        }
         if (pidfd >= 0) {
             (void)close(pidfd);
         }
@@ -531,6 +580,22 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
         return -1;
     }
     (void)close(barrier[1]);
+    do {
+        ready_count = read(ready[0], &ready_byte, 1U);
+    } while (ready_count < 0 && errno == EINTR);
+    (void)close(ready[0]);
+    if (ready_count == 1 && ready_byte == '1') {
+        if (config->detach != 0 &&
+            write_state(&paths, config, "running", child, 0, error) != 0) {
+            (void)kill(child, SIGKILL);
+        }
+        if (config->ready_fd >= 0) {
+            (void)write(config->ready_fd, "1", 1U);
+            (void)close(config->ready_fd);
+        }
+    } else if (config->ready_fd >= 0) {
+        (void)close(config->ready_fd);
+    }
     forward_target = (sig_atomic_t)child;
     if (install_forwarders(previous) != 0) {
         (void)kill(child, SIGKILL);
@@ -554,12 +619,24 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     if (pidfd >= 0) {
         (void)close(pidfd);
     }
-    cleanup_paths(&paths);
+    if (status >= 0 && WIFEXITED(status)) {
+        exit_code = WEXITSTATUS(status);
+    } else if (status >= 0 && WIFSIGNALED(status)) {
+        exit_code = 128 + WTERMSIG(status);
+    } else {
+        exit_code = MC_EXIT_RUNTIME;
+    }
+    if (config->detach != 0) {
+        cleanup_ephemeral(&paths);
+        (void)chown(paths.base, 0, 0);
+        (void)chmod(paths.base, 0750);
+        (void)write_state(&paths, config, ready_count == 1 ? "stopped" : "failed", child,
+                          exit_code, error);
+    } else {
+        cleanup_paths(&paths);
+    }
     if (status < 0) {
         return -1;
     }
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
-    }
-    return WIFSIGNALED(status) ? 128 + WTERMSIG(status) : MC_EXIT_RUNTIME;
+    return exit_code;
 }

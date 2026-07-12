@@ -14,6 +14,11 @@ const char *mc_state_dir(void) {
     return override == NULL || override[0] == '\0' ? "/var/lib/minicontainer" : override;
 }
 
+const char *mc_log_dir(void) {
+    const char *override = getenv("MC_LOG_DIR");
+    return override == NULL || override[0] == '\0' ? "/var/log/minicontainer" : override;
+}
+
 int mc_mkdir_p(const char *path, mode_t mode, struct mc_error *error) {
     char copy[PATH_MAX];
     char *cursor;

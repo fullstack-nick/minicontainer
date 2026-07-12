@@ -15,6 +15,8 @@ struct mc_run_config {
     gid_t group;
     char **environment;
     size_t environment_count;
+    int detach;
+    int ready_fd;
     char *const *command;
 };
 

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 static void usage(void) {
     (void)fprintf(stderr,
@@ -26,10 +27,15 @@ int main(int argc, char **argv) {
         return MC_EXIT_INTERNAL;
     }
     (void)memset(&config, 0, sizeof(config));
+    config.ready_fd = -1;
     for (index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--") == 0) {
             config.command = &argv[index + 1];
             break;
+        }
+        if (strcmp(argv[index], "--detach") == 0) {
+            config.detach = 1;
+            continue;
         }
         if (index + 1 >= argc) {
             break;
@@ -54,6 +60,15 @@ int main(int argc, char **argv) {
                 break;
             }
             environment[config.environment_count++] = assignment;
+        } else if (strcmp(argv[index], "--ready-fd") == 0) {
+            char *end = NULL;
+            errno = 0;
+            const long descriptor = strtol(argv[++index], &end, 10);
+            if (errno != 0 || end == argv[index] || *end != '\0' || descriptor < 0 ||
+                descriptor > 1048576L) {
+                break;
+            }
+            config.ready_fd = (int)descriptor;
         } else {
             break;
         }
@@ -61,7 +76,8 @@ int main(int argc, char **argv) {
     config.environment = environment;
     if (config.id == NULL || config.rootfs == NULL || config.hostname == NULL ||
         config.workdir == NULL || config.workdir[0] != '/' || config.command == NULL ||
-        config.command[0] == NULL || index >= argc) {
+        config.command[0] == NULL || index >= argc ||
+        (config.detach != 0 && config.ready_fd < 0)) {
         usage();
         free(environment);
         return MC_EXIT_USAGE;
