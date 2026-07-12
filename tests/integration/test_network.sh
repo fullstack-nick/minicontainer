@@ -111,8 +111,10 @@ id_b="$("$binary" create --name net-b --network bridge --image alpine-network --
 "$binary" start net-b >/dev/null
 grep -q '"ipv4_host":170655747' "$MC_STATE_DIR/containers/$id_b/state.json"
 "$binary" exec net-b -- ping -c 1 -W 1 10.44.0.2 >/dev/null
-"$binary" exec net-b -- /bin/sh -c \
-  'wget -qO- -T 8 http://example.com | grep -q "Example Domain"'
+if [[ "${MC_SKIP_EXTERNAL_NETWORK:-0}" != 1 ]]; then
+  "$binary" exec net-b -- /bin/sh -c \
+    'wget -qO- -T 8 http://example.com | grep -q "Example Domain"'
+fi
 
 id_none="$("$binary" create --name net-none --network none --image alpine-network -- \
   /bin/sh -c 'while :; do sleep 1; done')"
