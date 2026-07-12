@@ -20,8 +20,9 @@ Observed output:
 
 ## Release and infrastructure validation
 
-- A Debian package was built from commit `5526755dc1a96b634843c9a4e1cf13f325dfc901` and passed the same CTest suite before packaging.
-- Artifact SHA-256: `25DB3B62BBFC96D7968F98A230C5BD87A41CCDFE071A6611277F09EBC4EA90BA`.
+- A Debian package was built twice from commit `1a141f03e19aa7c9eaaef3b1e81c0f2f060e8fda`; both builds passed CTest and produced the same SHA-256.
+- Reproducible artifact SHA-256: `12A344369E57EB50E0D21A851A9C4A7C6C0A10FBD4E0861882318C872FF6CAA0`.
+- SPDX JSON SBOM generation completed with Syft 1.46.0.
 - Terraform 1.15 initialized with locked Google provider 7.39.0 and `terraform validate` passed.
 - The GCP mutation guard passed with the expected active account/project and rejected a deliberately wrong account.
 - A privileged WSL2 capability audit passed for systemd PID 1, cgroups v2, user/mount/network namespaces, overlayfs, libseccomp, libsystemd, transient systemd delegation, and nftables transaction parsing.
@@ -29,3 +30,13 @@ Observed output:
 ## Current GCP gate
 
 Project `minicontainer-r7m5o9ld` was created successfully on 2026-07-12. Billing linkage was rejected with `Cloud billing quota exceeded`; consequently Compute Engine API activation, Terraform apply, deployment, and live host proof remain incomplete. No VM or other billable project resource was created.
+
+Read-only billing inventory showed five existing linked projects, which accounts for the quota. MiniContainer does not detach or modify billing for those unrelated systems.
+
+## GitHub verification
+
+- Public repository: `https://github.com/fullstack-nick/minicontainer`
+- CI on `1a141f03e19aa7c9eaaef3b1e81c0f2f060e8fda`: `https://github.com/fullstack-nick/minicontainer/actions/runs/29190779453` — PASS
+- CodeQL on `1a141f03e19aa7c9eaaef3b1e81c0f2f060e8fda`: `https://github.com/fullstack-nick/minicontainer/actions/runs/29190779452` — PASS
+
+Stage 0 verdict: **OPEN** pending billing linkage, Terraform apply/idempotence, exact-artifact deployment, IAP live calls, host inspection, and final inventory proof.
