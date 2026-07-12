@@ -52,6 +52,7 @@ target_include_directories(minicontainer-shim PRIVATE include)
 target_compile_definitions(minicontainer PRIVATE
   MC_VERSION="${PROJECT_VERSION}"
   MC_GIT_COMMIT="${MC_GIT_COMMIT}")
+target_compile_definitions(minicontainer-shim PRIVATE _GNU_SOURCE)
 target_compile_options(minicontainer_core PRIVATE
   -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow -Wformat=2
   -Wundef -Wstrict-prototypes -Wmissing-prototypes -Wcast-qual -Wwrite-strings)
@@ -82,6 +83,7 @@ endif()
 install(TARGETS minicontainer RUNTIME DESTINATION bin)
 install(TARGETS minicontainer-shim RUNTIME DESTINATION libexec/minicontainer)
 install(FILES config/minicontainer.json DESTINATION etc/minicontainer RENAME config.json)
+install(FILES packaging/minicontainer-reconcile.service DESTINATION lib/systemd/system)
 
 set(CPACK_GENERATOR DEB)
 set(CPACK_PACKAGE_NAME minicontainer)
@@ -89,5 +91,7 @@ set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 set(CPACK_PACKAGE_CONTACT "MiniContainer maintainers")
 set(CPACK_DEBIAN_PACKAGE_SECTION admin)
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+  "${CMAKE_SOURCE_DIR}/packaging/postinst;${CMAKE_SOURCE_DIR}/packaging/prerm;${CMAKE_SOURCE_DIR}/packaging/postrm")
 set(CPACK_PACKAGE_FILE_NAME "minicontainer_${PROJECT_VERSION}_amd64")
 include(CPack)

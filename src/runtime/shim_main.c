@@ -4,12 +4,86 @@
 #include "minicontainer/resource.h"
 #include "minicontainer/security.h"
 #include "minicontainer/mount.h"
+#include "minicontainer/state.h"
+#include "minicontainer/fs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/prctl.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#define MC_LOG_MAX_SIZE (UINT64_C(1024) * UINT64_C(1024))
+#define MC_LOG_MAX_FILES 3
+
+static int write_all(int descriptor, const char *buffer, size_t length) {
+    size_t offset = 0U;
+    while (offset < length) {
+        const ssize_t written = write(descriptor, buffer + offset, length - offset);
+        if (written < 0) { if (errno == EINTR) continue; return -1; }
+        offset += (size_t)written;
+    }
+    return 0;
+}
+
+static int rotate_log(const char *path) {
+    char older[4096], newer[4096];
+    int index;
+    if (snprintf(older, sizeof(older), "%s.%d", path, MC_LOG_MAX_FILES) < 0) return -1;
+    (void)unlink(older);
+    for (index = MC_LOG_MAX_FILES - 1; index >= 1; --index) {
+        if (snprintf(older, sizeof(older), "%s.%d", path, index) < 0 ||
+            snprintf(newer, sizeof(newer), "%s.%d", path, index + 1) < 0) return -1;
+        if (rename(older, newer) != 0 && errno != ENOENT) return -1;
+    }
+    if (snprintf(newer, sizeof(newer), "%s.1", path) < 0 ||
+        (rename(path, newer) != 0 && errno != ENOENT)) return -1;
+    return open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0640);
+}
+
+static int log_pump(int input, int output, const char *path) {
+    char buffer[16384];
+    struct stat metadata;
+    uint64_t size = fstat(output, &metadata) == 0 ? (uint64_t)metadata.st_size : 0U;
+    for (;;) {
+        const ssize_t count = read(input, buffer, sizeof(buffer));
+        if (count == 0) break;
+        if (count < 0) { if (errno == EINTR) continue; return 1; }
+        if (size > 0U && size + (uint64_t)count > MC_LOG_MAX_SIZE) {
+            (void)close(output); output = rotate_log(path); size = 0U;
+            if (output < 0) return 1;
+        }
+        if (write_all(output, buffer, (size_t)count) != 0) return 1;
+        size += (uint64_t)count;
+    }
+    (void)fsync(output); (void)close(output); return 0;
+}
+
+static pid_t start_log_pump(const char *id) {
+    char path[4096];
+    int channel[2], output;
+    pid_t logger;
+    if (snprintf(path, sizeof(path), "%s/%s/container.log", mc_log_dir(), id) < 0 ||
+        pipe2(channel, O_CLOEXEC) != 0 || (output = dup(STDOUT_FILENO)) < 0) return -1;
+    logger = fork();
+    if (logger == 0) {
+        (void)close(channel[1]);
+        (void)prctl(PR_SET_PDEATHSIG, SIGTERM);
+        _exit(log_pump(channel[0], output, path));
+    }
+    (void)close(channel[0]); (void)close(output);
+    if (logger < 0 || dup2(channel[1], STDOUT_FILENO) < 0 ||
+        dup2(channel[1], STDERR_FILENO) < 0) {
+        (void)close(channel[1]); return -1;
+    }
+    (void)close(channel[1]); return logger;
+}
 
 static void usage(void) {
     (void)fprintf(stderr,
@@ -27,6 +101,7 @@ int main(int argc, char **argv) {
     struct mc_mount *mounts;
     int index;
     int result;
+    pid_t logger = -1;
 
     environment = calloc((size_t)argc, sizeof(*environment));
     publishes = calloc((size_t)argc, sizeof(*publishes));
@@ -165,7 +240,18 @@ int main(int argc, char **argv) {
         free(mounts); free(publishes); free(environment);
         return MC_EXIT_USAGE;
     }
-    result = mc_container_run(&config, &error);
+    if (config.detach != 0) logger = start_log_pump(config.id);
+    if (config.detach != 0 && logger < 0) {
+        result = -1;
+        mc_error_set(&error, MC_EXIT_RUNTIME, errno, "log-pump", config.id,
+                     "cannot start rotating log pump");
+    } else {
+        result = mc_container_run(&config, &error);
+    }
+    if (logger > 0) {
+        (void)close(STDOUT_FILENO); (void)close(STDERR_FILENO);
+        while (waitpid(logger, NULL, 0) < 0 && errno == EINTR) { }
+    }
     while (config.mount_count > 0U) mc_mount_free(&mounts[--config.mount_count]);
     free(config.seccomp_denies);
     free(mounts); free(publishes); free(environment);

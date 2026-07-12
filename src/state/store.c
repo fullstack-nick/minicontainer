@@ -495,13 +495,13 @@ static int remove_tree_entry(const char *path, const struct stat *metadata, int 
 
 int mc_state_remove(const char *id, struct mc_error *error) {
     char directory[PATH_MAX];
-    char log[PATH_MAX], log_directory[PATH_MAX];
+    char log_directory[PATH_MAX];
     if (make_path(directory, sizeof(directory), id, "") != 0 ||
-        snprintf(log_directory, sizeof(log_directory), "%s/%s", mc_log_dir(), id) < 0 ||
-        snprintf(log, sizeof(log), "%s/container.log", log_directory) < 0) return -1;
+        snprintf(log_directory, sizeof(log_directory), "%s/%s", mc_log_dir(), id) < 0) return -1;
     (void)chmod(directory, 0700);
+    (void)chmod(log_directory, 0700);
     if (nftw(directory, remove_tree_entry, 32, FTW_DEPTH | FTW_PHYS) != 0 ||
-        (unlink(log) != 0 && errno != ENOENT) || (rmdir(log_directory) != 0 && errno != ENOENT)) {
+        (nftw(log_directory, remove_tree_entry, 32, FTW_DEPTH | FTW_PHYS) != 0 && errno != ENOENT)) {
         mc_error_set(error, MC_EXIT_RUNTIME, errno, "remove-container", id,
                      "cannot remove container state"); return -1;
     }

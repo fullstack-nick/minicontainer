@@ -45,6 +45,11 @@ jobs:
             "$PWD/build/dev-gcc/minicontainer" \
             "$PWD/build/dev-gcc/minicontainer-shim" \
             "$archive"
+          sudo MC_TEST_INHERIT_PROC=1 MC_SKIP_CGROUP=1 MC_SKIP_OOM=1 \
+            MC_STRESS_SEQUENTIAL=10 bash tests/integration/test_reliability.sh \
+            "$PWD/build/dev-gcc/minicontainer" \
+            "$PWD/build/dev-gcc/minicontainer-shim" \
+            "$archive"
 
   infrastructure:
     runs-on: ubuntu-24.04

@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #ifndef MC_VERSION
@@ -109,6 +110,7 @@ static int show_log(const char *path, const char *id, long tail, int follow) {
     free(ring); free(line);
     while (follow != 0) {
         char status[16];
+        struct stat current, opened;
         clearerr(stream);
         line = NULL; capacity = 0U;
         if (getline(&line, &capacity, stream) >= 0) {
@@ -117,6 +119,11 @@ static int show_log(const char *path, const char *id, long tail, int follow) {
         free(line);
         if (mc_state_get_status(id, status, NULL, &(struct mc_error){0}) != 0 ||
             strcmp(status, "running") != 0) break;
+        if (stat(path, &current) == 0 && fstat(fileno(stream), &opened) == 0 &&
+            (current.st_dev != opened.st_dev || current.st_ino != opened.st_ino)) {
+            FILE *replacement = fopen(path, "r");
+            if (replacement != NULL) { (void)fclose(stream); stream = replacement; }
+        }
         (void)usleep(100000U);
     }
     (void)fclose(stream);
