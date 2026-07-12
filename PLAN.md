@@ -570,6 +570,7 @@ The demo sequence is fixed: import pinned Alpine rootfs; run an isolated shell c
 - 2026-07-12: Live billing-account discovery showed the account currency is TRY, so the API cannot accept a USD-denominated budget. Locked the budget at TRY 470, approximately USD 10 at the observed 46.98 USD/TRY rate; threshold percentages remain unchanged.
 - 2026-07-12: Stage 2 passed locally and live with systemd-delegated cgroups v2, exact limit readback, JSON statistics, CPU throttling, memory OOM accounting, PID exhaustion, signal cleanup, and a zero-orphan GCP inspection. The e2-micro remained healthy, so no temporary resize was needed.
 - 2026-07-12: Stage 3 passed locally and live with durable lifecycle state, name/prefix resolution, namespace-preserving exec, root-only shim control, pidfd identity checks, graceful and forced stop, persistent overlays, concurrent conflict handling, shim/CLI crash recovery, gc/restart, and zero-orphan GCP inspection. The e2-micro remained healthy.
+- 2026-07-12: Stage 7 passed on exact v1.0 candidate `c2d811e`: reproducible runtime and debug packages, SBOM/checksums, sanitizers, Valgrind, static analysis, CI/CodeQL, 200-cycle N2 stress, benchmark suite, 30-minute e2-micro soak, IAP-only workstation HTTP proof, polished demo/docs, history and artifact secret scans, Terraform no-drift, and zero owned-resource leaks. The N2 resize was reversed; final inventory is exactly one private running e2-micro.
 
 ## 12. Stage status
 
@@ -582,4 +583,4 @@ The demo sequence is fixed: import pinned Alpine rootfs; run an isolated shell c
 | 4. Networking | v0.4 | Complete | PASS | PASS | PASS | `docs/proofs/stage-04-networking/` |
 | 5. Security | v0.5 | Complete | PASS | PASS | PASS | `docs/proofs/stage-05-security/` |
 | 6. Reliability/operations | v0.6 | Complete | PASS | PASS | PASS | `docs/proofs/stage-06-reliability-operations/` |
-| 7. Release/demo | v1.0 | Not started | — | — | — | — |
+| 7. Release/demo | v1.0 | Complete | Quality+reproducibility PASS | CI+CodeQL PASS | Exact artifact, N2 gate, restored e2-micro PASS | `docs/proofs/stage-07-v1-release/` |

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "git_commit": "c2d811e815dff90e3b6c076cc6a703d4c23a15fc",
+  "start_unix": 1783874412,
+  "end_unix": 1783876212,
+  "duration_seconds": 1800,
+  "iterations": 30,
+  "failures": 0,
+  "max_memory_bytes": 2113536,
+  "kernel_findings": 0,
+  "result": "PASS"
+}

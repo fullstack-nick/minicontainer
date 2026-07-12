@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 commit="$(git -C "$repo_root" rev-parse HEAD)"
 quality_dir="${TMPDIR:-/tmp}/minicontainer-quality-$commit"
+valgrind_dir="${TMPDIR:-/tmp}/minicontainer-valgrind-$commit"
 
 cmake --fresh -S "$repo_root" -B "$quality_dir" -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
@@ -14,9 +15,11 @@ ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1 \
 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
   ctest --test-dir "$quality_dir" --output-on-failure
 
+cmake --fresh -S "$repo_root" -B "$valgrind_dir" -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build "$valgrind_dir" --target unit_tests
 valgrind --quiet --leak-check=full --show-leak-kinds=all \
   --errors-for-leak-kinds=all --track-fds=yes --error-exitcode=1 \
-  "$repo_root/build/dev-gcc/unit_tests"
+  "$valgrind_dir/unit_tests"
 
 mapfile -t sources < <(find "$repo_root/src" -type f -name '*.c' -print | sort)
 clang-tidy -p "$quality_dir" "${sources[@]}"

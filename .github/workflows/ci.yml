@@ -66,3 +66,15 @@ jobs:
         run: terraform -chdir=infra/terraform validate
       - name: Policy tests
         run: terraform -chdir=infra/terraform test
+
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install quality and C dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          clang-tidy cppcheck valgrind ninja-build
+          libarchive-dev libssl-dev libsystemd-dev libjson-c-dev libseccomp-dev
+      - name: Sanitizers, Valgrind, and static analysis
+        run: scripts/quality-gates.sh

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "candidate_commit": "c2d811e815dff90e3b6c076cc6a703d4c23a15fc",
+  "workstation_iap_http": {
+    "status": 200,
+    "body": "MINICONTAINER_HTTP"
+  },
+  "container_stats": {
+    "memory_current_bytes": 978944,
+    "memory_max_bytes": 100663296,
+    "cpu_quota": 50000,
+    "cpu_period": 100000,
+    "pids_current": 2,
+    "pids_max": 64,
+    "oom_kills": 0
+  },
+  "cleanup": {
+    "containers": 0,
+    "container_veths": 0,
+    "container_nft_rules": 0,
+    "container_mounts": 0,
+    "container_cgroups": 0,
+    "reconciled": 0
+  },
+  "final_compute": {
+    "running_instances": 1,
+    "machine_type": "e2-micro",
+    "external_ips": 0,
+    "cloud_routers": 0
+  }
+}

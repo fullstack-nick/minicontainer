@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "cold_start_us": {
+    "median": 166432,
+    "p95": 197316
+  },
+  "steady_state_memory_bytes": 1003520,
+  "run_remove_per_second": 6.11,
+  "exec_us": {
+    "median": 5523,
+    "p95": 5687
+  },
+  "cpu_half_core": {
+    "window_seconds": 10,
+    "usage_usec": 5025947,
+    "accuracy_percent": 50.26
+  },
+  "http_us": {
+    "host_median": 162.0,
+    "container_median": 167.0,
+    "overhead_us": 5.0
+  }
+}

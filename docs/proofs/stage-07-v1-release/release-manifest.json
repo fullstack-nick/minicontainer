@@ -1,0 +1,8 @@
+{
+  "version": "1.0.0",
+  "git_commit": "c2d811e815dff90e3b6c076cc6a703d4c23a15fc",
+  "runtime_sha256": "bc224044d9ddba657c205fe8e15f6b4d73e96357ca03c5152a20a4fc80acf8b9",
+  "debug_sha256": "3f36ab61456470806549c2a33a471246218a656ed5ae545d2c157b5ce7f7216a",
+  "ci_run": 29200214887,
+  "codeql_run": 29200214903
+}

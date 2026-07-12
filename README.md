@@ -63,6 +63,11 @@ reports prerequisite readiness.
 
 ## Quick demo
 
+![MiniContainer terminal demo](docs/minicontainer-demo.gif)
+
+The replayable [asciinema recording](docs/minicontainer-demo.cast) was captured from the
+runtime itself; the GIF is a compact reviewer-facing version of the same flow.
+
 ```bash
 sudo minicontainer image import alpine alpine-minirootfs-3.24.1-x86_64.tar.gz
 
@@ -117,6 +122,21 @@ Release artifacts are built once by `scripts/build-release.sh`:
 Deployment uses a private GCP VM with no external IP. SSH, SCP, and the HTTP demo traverse
 authenticated IAP. Final cloud inventory is one running `e2-micro`; temporary NAT and
 benchmark capacity are removed before release completion.
+
+Release-candidate measurements on `n2-standard-16`:
+
+| Measurement | Result |
+|---|---:|
+| Cold start, median / p95 | 166 ms / 197 ms |
+| `exec` latency, median / p95 | 5.5 ms / 5.7 ms |
+| Steady-state memory | 980 KiB |
+| Run/remove throughput | 6.11 containers/s |
+| Half-core CPU-limit measurement | 50.26% |
+| Median HTTP container overhead | 5 us |
+
+The exact [machine-readable benchmark](docs/proofs/stage-07-v1-release/benchmark-n2.json)
+and [v1.0 live proof](docs/proofs/stage-07-v1-release/README.md) are committed with the
+release.
 
 ## More
 
