@@ -1,0 +1,10 @@
+PASS
+
+VM: minicontainer-vm, us-west1-a, private/IAP-only
+Machine type: e2-micro (no resize required)
+Package: minicontainer_0.0.1_amd64.deb
+Package SHA-256: 5dd36572247d458cf59592c51db05988224f9e12aca4914449580538b34d72f5
+Installed version: 0.0.1
+Embedded Git commit: bec0516f87f9070a0454771b1c9e86bafeaa398b
+
+Remote package SHA-256 matched the local exact artifact after dpkg installation.

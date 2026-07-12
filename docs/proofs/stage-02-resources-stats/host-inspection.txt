@@ -1,0 +1,15 @@
+PASS
+
+Canonical host:
+  Ubuntu 24.04; systemd 255; Linux 6.17 GCP kernel
+  unified cgroups v2 with delegated transient scopes
+  swap disabled
+
+Post-test inspection:
+  zero minicontainer-*.scope units
+  zero MiniContainer runtime processes
+  zero minicontainer-* cgroup paths
+  zero MiniContainer runtime mounts
+
+Host remained healthy after pressure tests. The e2-micro retained available memory and a
+near-idle load average, so automatic N2 escalation was not warranted.

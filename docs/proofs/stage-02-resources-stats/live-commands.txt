@@ -1,0 +1,13 @@
+PASS
+
+Installed-binary cgroup integration suite on GCP:
+  PASS cgroup limits, stats, OOM, throttling, PID exhaustion, and cleanup
+
+Behavior asserted from live kernel files:
+- requested memory, zero-swap, CPU quota/period, and PID maximum read back exactly;
+- busy CPU workload increments cpu.stat nr_throttled;
+- over-limit tmpfs allocation increments memory.events oom;
+- static fork-pressure workload receives EAGAIN and increments pids.events max;
+- stats --no-stream --json matches the active payload cgroup values;
+- SIGTERM reaches the shim/container path;
+- payload cgroup disappears after exit.

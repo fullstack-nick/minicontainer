@@ -1,0 +1,13 @@
+PASS
+
+Candidate CI (GCC, Clang, privileged hosted smoke, Terraform):
+https://github.com/fullstack-nick/minicontainer/actions/runs/29193846421
+Conclusion: success
+
+Proof-support CI:
+https://github.com/fullstack-nick/minicontainer/actions/runs/29193956310
+Conclusion: success
+
+CodeQL:
+https://github.com/fullstack-nick/minicontainer/actions/runs/29193956264
+Conclusion: success
