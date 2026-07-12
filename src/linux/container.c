@@ -1,4 +1,5 @@
 #include "minicontainer/runtime.h"
+#include "minicontainer/security.h"
 
 #include "minicontainer/cgroup.h"
 #include "minicontainer/fs.h"
@@ -10,6 +11,7 @@
 #include <ftw.h>
 #include <grp.h>
 #include <json-c/json.h>
+#include <linux/openat2.h>
 #include <linux/sched.h>
 #include <net/if.h>
 #include <poll.h>
@@ -314,6 +316,64 @@ static int setup_devices(const char *root) {
     return 0;
 }
 
+static int open_mount_target(const char *root, const char *target) {
+    char *copy = strdup(target + 1);
+    char *component, *save = NULL;
+    int current = open(root, O_PATH | O_DIRECTORY | O_CLOEXEC);
+    if (copy == NULL || current < 0) { free(copy); return -1; }
+    for (component = strtok_r(copy, "/", &save); component != NULL;
+         component = strtok_r(NULL, "/", &save)) {
+        struct open_how how = {
+            .flags = O_PATH | O_DIRECTORY | O_CLOEXEC,
+            .resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS
+        };
+        int next;
+        if (mkdirat(current, component, 0755) != 0 && errno != EEXIST) {
+            (void)close(current); free(copy); return -1;
+        }
+        next = (int)syscall(SYS_openat2, current, component, &how, sizeof(how));
+        if (next < 0) { (void)close(current); free(copy); return -1; }
+        (void)close(current); current = next;
+    }
+    free(copy);
+    return current;
+}
+
+static int setup_custom_mounts(const struct child_context *context) {
+    size_t index;
+    for (index = 0U; index < context->config->mount_count; ++index) {
+        const struct mc_mount *configured = &context->config->mounts[index];
+        int target = open_mount_target(context->paths->merged, configured->target);
+        char target_path[8192];
+        if (target < 0 || snprintf(target_path, sizeof(target_path), "%s%s",
+                                   context->paths->merged, configured->target) < 0)
+            return -1;
+        if (configured->type == MC_MOUNT_BIND) {
+            int source = open(configured->source, O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+            char source_path[64];
+            if (source < 0 || snprintf(source_path, sizeof(source_path), "/proc/self/fd/%d", source) < 0 ||
+                mount(source_path, target_path, NULL, MS_BIND | MS_REC, NULL) != 0 ||
+                mount(NULL, target_path, NULL, MS_BIND | MS_REMOUNT | MS_NOSUID | MS_NODEV |
+                                               (configured->readonly != 0 ? MS_RDONLY : 0U), NULL) != 0) {
+                if (source >= 0) (void)close(source);
+                (void)close(target); return -1;
+            }
+            (void)close(source);
+        } else if (configured->type == MC_MOUNT_TMPFS) {
+            char options[64];
+            if (snprintf(options, sizeof(options), "mode=1777,size=%llu",
+                         (unsigned long long)configured->size) < 0 ||
+                mount("tmpfs", target_path, "tmpfs", MS_NOSUID | MS_NODEV, options) != 0) {
+                (void)close(target); return -1;
+            }
+        } else {
+            (void)close(target); errno = EINVAL; return -1;
+        }
+        (void)close(target);
+    }
+    return 0;
+}
+
 static int setup_root(const struct child_context *context) {
     char options[12288];
     char old_root[4096];
@@ -359,6 +419,10 @@ static int setup_root(const struct child_context *context) {
             (void)fprintf(stderr, "minicontainer-shim: proc-mount: %s\n", strerror(errno));
             return -1;
         }
+    }
+    if (setup_custom_mounts(context) != 0) {
+        (void)fprintf(stderr, "minicontainer-shim: custom mounts: %s\n", strerror(errno));
+        return -1;
     }
     if (join_path(old_root, sizeof(old_root), context->paths->merged, ".oldroot") != 0 ||
         make_directory(old_root, 0700) != 0 || chdir(context->paths->merged) != 0) {
@@ -481,6 +545,15 @@ static int install_environment(const struct mc_run_config *config) {
     return 0;
 }
 
+static void close_workload_descriptors(void) {
+    long maximum;
+    int descriptor;
+    (void)syscall(SYS_close_range, 3U, ~0U, 0U);
+    maximum = sysconf(_SC_OPEN_MAX);
+    if (maximum < 0 || maximum > 1048576L) maximum = 1048576L;
+    for (descriptor = 3; descriptor < (int)maximum; ++descriptor) (void)close(descriptor);
+}
+
 static int supervise(const struct mc_run_config *config) {
     sigset_t signals;
     sigset_t empty;
@@ -510,16 +583,28 @@ static int supervise(const struct mc_run_config *config) {
                           strerror(errno));
             _exit(125);
         }
-        if (setresgid(config->group, config->group, config->group) != 0 ||
-            setresuid(config->user, config->user, config->user) != 0) {
-            (void)fprintf(stderr, "minicontainer-init: workload identity: %s\n",
-                          strerror(errno));
+        if (mc_security_prepare(config->capability_mask) != 0) {
+            (void)fprintf(stderr, "minicontainer-init: security preparation: %s\n", strerror(errno));
+            _exit(125);
+        }
+        if (setresgid(config->group, config->group, config->group) != 0) {
+            (void)fprintf(stderr, "minicontainer-init: workload group: %s\n", strerror(errno));
+            _exit(125);
+        }
+        if (setresuid(config->user, config->user, config->user) != 0) {
+            (void)fprintf(stderr, "minicontainer-init: workload user: %s\n", strerror(errno));
             _exit(125);
         }
         if (install_environment(config) != 0) {
             (void)fprintf(stderr, "minicontainer-init: environment: %s\n", strerror(errno));
             _exit(125);
         }
+        if (mc_security_apply(config->capability_mask, config->seccomp_denies,
+                              config->seccomp_deny_count) != 0) {
+            (void)fprintf(stderr, "minicontainer-init: security policy: %s\n", strerror(errno));
+            _exit(125);
+        }
+        close_workload_descriptors();
         execvp(config->command[0], config->command);
         (void)fprintf(stderr, "minicontainer-init: exec %s: %s\n", config->command[0],
                       strerror(errno));
@@ -629,6 +714,11 @@ static int child_main(const struct child_context *context) {
     }
     if (generate_identity_files(context->config->hostname, resolver_config) != 0) {
         (void)fprintf(stderr, "minicontainer-shim: identity files: %s\n", strerror(errno));
+        return 125;
+    }
+    if (context->config->readonly_root != 0 &&
+        mount(NULL, "/", NULL, MS_REMOUNT | MS_BIND | MS_RDONLY, NULL) != 0) {
+        (void)fprintf(stderr, "minicontainer-shim: read-only root: %s\n", strerror(errno));
         return 125;
     }
     if (context->config->ready_fd >= 0) {

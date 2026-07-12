@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install C dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libarchive-dev libssl-dev libsystemd-dev libjson-c-dev nftables
+        run: sudo apt-get update && sudo apt-get install --yes libarchive-dev libssl-dev libsystemd-dev libjson-c-dev libseccomp-dev nftables
       - name: Configure
         run: cmake --preset dev-${{ matrix.compiler }}
       - name: Build
@@ -38,6 +38,10 @@ jobs:
             "$archive"
           # GitHub-hosted runners do not guarantee forwarded guest egress; live GCP proves it.
           sudo MC_SKIP_CGROUP=1 MC_SKIP_EXTERNAL_NETWORK=1 bash tests/integration/test_network.sh \
+            "$PWD/build/dev-gcc/minicontainer" \
+            "$PWD/build/dev-gcc/minicontainer-shim" \
+            "$archive"
+          sudo MC_TEST_INHERIT_PROC=1 MC_SKIP_CGROUP=1 bash tests/integration/test_security.sh \
             "$PWD/build/dev-gcc/minicontainer" \
             "$PWD/build/dev-gcc/minicontainer-shim" \
             "$archive"

@@ -48,7 +48,7 @@ grep -q '"ipv4_host":170655746' "$MC_STATE_DIR/containers/$id_a/state.json"
 host_a="mch${id_a:0:8}"
 grep -q 'master mcbr0' <<<"$(ip link show "$host_a")"
 network_a="$("$binary" exec net-a -- /bin/sh -c \
-  'ip -4 addr show dev eth0; ip route; ping -c 1 -W 1 10.44.0.1')"
+  'ip -4 addr show dev eth0; ip route; ip route get 10.44.0.1')"
 grep -q '10.44.0.2/24' <<<"$network_a"
 grep -q 'default via 10.44.0.1 dev eth0' <<<"$network_a"
 for _ in $(seq 1 50); do
@@ -110,7 +110,8 @@ id_b="$("$binary" create --name net-b --network bridge --image alpine-network --
   /bin/sh -c 'while :; do sleep 1; done')"
 "$binary" start net-b >/dev/null
 grep -q '"ipv4_host":170655747' "$MC_STATE_DIR/containers/$id_b/state.json"
-"$binary" exec net-b -- ping -c 1 -W 1 10.44.0.2 >/dev/null
+"$binary" exec net-b -- /bin/sh -c \
+  'wget -qO- -T 2 http://10.44.0.2:8080 | grep -q MINICONTAINER_HTTP'
 if [[ "${MC_SKIP_EXTERNAL_NETWORK:-0}" != 1 ]]; then
   "$binary" exec net-b -- /bin/sh -c \
     'wget -qO- -T 8 http://example.com | grep -q "Example Domain"'
@@ -123,7 +124,7 @@ none_links="$("$binary" exec net-none -- ip link show)"
 grep -q 'LOOPBACK' <<<"$none_links"
 ! grep -q 'eth0' <<<"$none_links"
 set +e
-"$binary" exec net-none -- ping -c 1 -W 1 10.44.0.1 >/dev/null 2>&1
+"$binary" exec net-none -- ip route get 10.44.0.1 >/dev/null 2>&1
 none_ping=$?
 set -e
 [[ "$none_ping" -ne 0 ]]

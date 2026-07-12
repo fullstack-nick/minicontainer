@@ -1,6 +1,7 @@
 #include "minicontainer/validate.h"
 #include "minicontainer/resource.h"
 #include "minicontainer/network.h"
+#include "minicontainer/security.h"
 
 #include <stdio.h>
 #include <netinet/in.h>
@@ -50,6 +51,17 @@ int main(void) {
         expect(mc_parse_cpu_quota("0", &value) == 0, "zero CPU rejected");
         expect(mc_parse_positive_u64("128", UINT64_C(4194304), &value) != 0 && value == 128U,
                "PID limit parsed");
+    }
+    {
+        unsigned int capability = 0U;
+        expect(mc_capability_parse("CHOWN", &capability) != 0 && capability == 0U,
+               "canonical capability parsed");
+        expect(mc_capability_parse("CAP_NET_BIND_SERVICE", &capability) != 0 && capability == 10U,
+               "prefixed capability parsed");
+        expect(mc_capability_parse("sys_admin", &capability) == 0,
+               "non-canonical capability rejected");
+        expect(mc_seccomp_name_valid("read") != 0, "known syscall accepted");
+        expect(mc_seccomp_name_valid("not_a_syscall") == 0, "unknown syscall rejected");
     }
     {
         struct mc_publish published;

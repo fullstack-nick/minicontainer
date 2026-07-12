@@ -2,6 +2,8 @@
 #include "minicontainer/runtime.h"
 #include "minicontainer/validate.h"
 #include "minicontainer/resource.h"
+#include "minicontainer/security.h"
+#include "minicontainer/mount.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,13 +24,15 @@ int main(int argc, char **argv) {
     unsigned int group = 0U;
     char **environment;
     struct mc_publish *publishes;
+    struct mc_mount *mounts;
     int index;
     int result;
 
     environment = calloc((size_t)argc, sizeof(*environment));
     publishes = calloc((size_t)argc, sizeof(*publishes));
-    if (environment == NULL || publishes == NULL) {
-        free(publishes); free(environment);
+    mounts = calloc((size_t)argc, sizeof(*mounts));
+    if (environment == NULL || publishes == NULL || mounts == NULL) {
+        free(mounts); free(publishes); free(environment);
         return MC_EXIT_INTERNAL;
     }
     (void)memset(&config, 0, sizeof(config));
@@ -40,6 +44,10 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[index], "--detach") == 0) {
             config.detach = 1;
+            continue;
+        }
+        if (strcmp(argv[index], "--read-only") == 0) {
+            config.readonly_root = 1;
             continue;
         }
         if (index + 1 >= argc) {
@@ -122,23 +130,45 @@ int main(int argc, char **argv) {
             publishes[config.publish_count].container_port = (uint16_t)container_port;
             publishes[config.publish_count].protocol = (uint8_t)protocol;
             ++config.publish_count;
+        } else if (strcmp(argv[index], "--cap-add") == 0) {
+            unsigned int capability;
+            if (!mc_capability_parse(argv[++index], &capability) || capability >= 64U) break;
+            config.capability_mask |= UINT64_C(1) << capability;
+        } else if (strcmp(argv[index], "--bind") == 0) {
+            if (!mc_parse_bind_mount(argv[++index], &mounts[config.mount_count], &error)) break;
+            ++config.mount_count;
+        } else if (strcmp(argv[index], "--tmpfs") == 0) {
+            if (!mc_parse_tmpfs_mount(argv[++index], &mounts[config.mount_count], &error)) break;
+            ++config.mount_count;
+        } else if (strcmp(argv[index], "--seccomp-deny") == 0) {
+            char *name = argv[++index];
+            if (!mc_seccomp_name_valid(name)) break;
+            config.seccomp_denies = realloc(config.seccomp_denies,
+                (config.seccomp_deny_count + 1U) * sizeof(*config.seccomp_denies));
+            if (config.seccomp_denies == NULL) break;
+            config.seccomp_denies[config.seccomp_deny_count++] = name;
         } else {
             break;
         }
     }
     config.environment = environment;
     config.publishes = publishes;
+    config.mounts = mounts;
     if (config.id == NULL || config.rootfs == NULL || config.hostname == NULL ||
         config.workdir == NULL || config.workdir[0] != '/' || config.command == NULL ||
         config.command[0] == NULL || index >= argc ||
         (config.detach != 0 && config.ready_fd < 0) || config.memory_max == 0U ||
         config.cpu_quota == 0U || config.pids_max == 0U) {
         usage();
-        free(publishes); free(environment);
+        while (config.mount_count > 0U) mc_mount_free(&mounts[--config.mount_count]);
+        free(config.seccomp_denies);
+        free(mounts); free(publishes); free(environment);
         return MC_EXIT_USAGE;
     }
     result = mc_container_run(&config, &error);
-    free(publishes); free(environment);
+    while (config.mount_count > 0U) mc_mount_free(&mounts[--config.mount_count]);
+    free(config.seccomp_denies);
+    free(mounts); free(publishes); free(environment);
     if (result < 0) {
         mc_error_print(&error, 0);
         return error.code == 0 ? MC_EXIT_RUNTIME : error.code;

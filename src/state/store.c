@@ -88,12 +88,14 @@ static json_object *config_json(const struct mc_run_config *config, const char *
     json_object *environment = json_object_new_array();
     json_object *command = json_object_new_array();
     json_object *publishes = json_object_new_array();
+    json_object *mounts = json_object_new_array();
+    json_object *seccomp_denies = json_object_new_array();
     size_t index;
     struct timespec now;
     const char *digest = strstr(config->rootfs, "/sha256/");
     (void)clock_gettime(CLOCK_REALTIME, &now);
     if (root == NULL || resources == NULL || environment == NULL || command == NULL ||
-        publishes == NULL) goto fail;
+        publishes == NULL || mounts == NULL || seccomp_denies == NULL) goto fail;
     json_object_object_add(root, "schema_version", json_object_new_int(1));
     json_object_object_add(root, "id", json_object_new_string(config->id));
     if (config->name != NULL) json_object_object_add(root, "name", json_object_new_string(config->name));
@@ -111,6 +113,8 @@ static json_object *config_json(const struct mc_run_config *config, const char *
     json_object_object_add(root, "workdir", json_object_new_string(config->workdir));
     json_object_object_add(root, "user", json_object_new_int64((int64_t)config->user));
     json_object_object_add(root, "group", json_object_new_int64((int64_t)config->group));
+    json_object_object_add(root, "capability_mask", json_object_new_uint64(config->capability_mask));
+    json_object_object_add(root, "readonly_root", json_object_new_boolean(config->readonly_root));
     json_object_object_add(root, "network_mode",
                            json_object_new_string(config->network_bridge != 0 ? "bridge" : "none"));
     json_object_object_add(root, "ipv4_host", json_object_new_int64((int64_t)config->ipv4_host));
@@ -128,6 +132,23 @@ static json_object *config_json(const struct mc_run_config *config, const char *
         json_object_array_add(publishes, published);
     }
     json_object_object_add(root, "publishes", publishes);
+    for (index = 0U; index < config->mount_count; ++index) {
+        json_object *mounted = json_object_new_object();
+        if (mounted == NULL) goto fail;
+        json_object_object_add(mounted, "type",
+                               json_object_new_int((int)config->mounts[index].type));
+        if (config->mounts[index].source != NULL)
+            json_object_object_add(mounted, "source", json_object_new_string(config->mounts[index].source));
+        json_object_object_add(mounted, "target", json_object_new_string(config->mounts[index].target));
+        json_object_object_add(mounted, "size", json_object_new_uint64(config->mounts[index].size));
+        json_object_object_add(mounted, "readonly", json_object_new_boolean(config->mounts[index].readonly));
+        json_object_array_add(mounts, mounted);
+    }
+    json_object_object_add(root, "mounts", mounts);
+    for (index = 0U; index < config->seccomp_deny_count; ++index)
+        json_object_array_add(seccomp_denies,
+                              json_object_new_string(config->seccomp_denies[index]));
+    json_object_object_add(root, "seccomp_denies", seccomp_denies);
     json_object_object_add(root, "created_at_unix_ns", json_object_new_uint64(
         ((uint64_t)now.tv_sec * UINT64_C(1000000000)) + (uint64_t)now.tv_nsec));
     json_object_object_add(root, "build_version", json_object_new_string(MC_VERSION));
@@ -146,7 +167,9 @@ static json_object *config_json(const struct mc_run_config *config, const char *
     return root;
 fail:
     json_object_put(root); json_object_put(resources); json_object_put(environment);
-    json_object_put(command); json_object_put(publishes); errno = ENOMEM; return NULL;
+    json_object_put(command); json_object_put(publishes); json_object_put(mounts);
+    json_object_put(seccomp_denies);
+    errno = ENOMEM; return NULL;
 }
 
 static int name_is_taken(const char *name, const char *own_id) {
@@ -333,6 +356,40 @@ static int load_arrays(json_object *root, struct mc_run_config *config) {
         if (!json_object_object_get_ex(published, "protocol", &value)) return -1;
         config->publishes[index].protocol = (uint8_t)json_object_get_int(value);
     }
+    if (!json_object_object_get_ex(root, "mounts", &array)) return 0;
+    if (json_object_get_type(array) != json_type_array) return -1;
+    count = json_object_array_length(array);
+    config->mounts = calloc(count == 0U ? 1U : count, sizeof(*config->mounts));
+    if (config->mounts == NULL) return -1;
+    config->mount_count = count;
+    for (index = 0U; index < count; ++index) {
+        json_object *mounted = json_object_array_get_idx(array, index);
+        json_object *value;
+        if (!json_object_object_get_ex(mounted, "type", &value)) return -1;
+        config->mounts[index].type = (enum mc_mount_type)json_object_get_int(value);
+        config->mounts[index].source = copy_string(mounted, "source");
+        config->mounts[index].target = copy_string(mounted, "target");
+        if (!json_object_object_get_ex(mounted, "size", &value)) return -1;
+        config->mounts[index].size = json_object_get_uint64(value);
+        if (!json_object_object_get_ex(mounted, "readonly", &value)) return -1;
+        config->mounts[index].readonly = json_object_get_boolean(value);
+        if (config->mounts[index].target == NULL ||
+            (config->mounts[index].type == MC_MOUNT_BIND && config->mounts[index].source == NULL))
+            return -1;
+    }
+    if (json_object_object_get_ex(root, "seccomp_denies", &array)) {
+        if (json_object_get_type(array) != json_type_array) return -1;
+        count = json_object_array_length(array);
+        config->seccomp_denies = calloc(count + 1U, sizeof(*config->seccomp_denies));
+        if (config->seccomp_denies == NULL) return -1;
+        config->seccomp_deny_count = count;
+        for (index = 0U; index < count; ++index) {
+            const char *name = json_object_get_string(json_object_array_get_idx(array, index));
+            if (name == NULL) return -1;
+            config->seccomp_denies[index] = strdup(name);
+            if (config->seccomp_denies[index] == NULL) return -1;
+        }
+    }
     return 0;
 }
 
@@ -354,6 +411,10 @@ int mc_state_load_config(const char *reference, struct mc_run_config *config,
     config->user = (uid_t)json_object_get_int64(value);
     if (!json_object_object_get_ex(root, "group", &value)) goto invalid_loaded;
     config->group = (gid_t)json_object_get_int64(value);
+    if (json_object_object_get_ex(root, "capability_mask", &value))
+        config->capability_mask = json_object_get_uint64(value);
+    if (json_object_object_get_ex(root, "readonly_root", &value))
+        config->readonly_root = json_object_get_boolean(value);
     if (!json_object_object_get_ex(root, "network_mode", &value)) goto invalid_loaded;
     config->network_bridge = strcmp(json_object_get_string(value), "bridge") == 0;
     if (!json_object_object_get_ex(root, "ipv4_host", &value)) goto invalid_loaded;
@@ -382,6 +443,13 @@ void mc_state_free_config(struct mc_run_config *config) {
     for (index = 0U; index < config->environment_count; ++index) free(config->environment[index]);
     free(config->environment);
     free(config->publishes);
+    for (index = 0U; index < config->mount_count; ++index) {
+        free(config->mounts[index].source); free(config->mounts[index].target);
+    }
+    free(config->mounts);
+    for (index = 0U; index < config->seccomp_deny_count; ++index)
+        free(config->seccomp_denies[index]);
+    free(config->seccomp_denies);
     if (config->command != NULL) {
         for (index = 0U; config->command[index] != NULL; ++index) free(config->command[index]);
         free(config->command);

@@ -6,7 +6,9 @@
 #include "minicontainer/id.h"
 #include "minicontainer/runtime.h"
 #include "minicontainer/network.h"
+#include "minicontainer/mount.h"
 #include "minicontainer/resource.h"
+#include "minicontainer/security.h"
 #include "minicontainer/stats.h"
 #include "minicontainer/state.h"
 #include "minicontainer/validate.h"
@@ -36,6 +38,10 @@ static void usage(FILE *stream) {
                   "[--workdir PATH] [--user UID[:GID]] [--memory BYTES] "
                   "[--memory-swap BYTES] [--cpus DECIMAL] [--pids-limit COUNT] "
                   "[--network bridge|none] "
+                  "[--cap-add CAPABILITY] "
+                  "[--read-only] "
+                  "[--bind SOURCE:TARGET[:ro|rw]] [--tmpfs TARGET[:SIZE]] "
+                  "[--seccomp-profile PATH] "
                   "[--publish HOST_IP:HOST_PORT:CONTAINER_PORT/tcp|udp] "
                   "-- COMMAND [ARG...]\n"
                   "  minicontainer create [--name NAME] --image NAME [run flags] -- COMMAND [ARG...]\n"
@@ -401,8 +407,12 @@ rm_error:
         char *workdir = default_workdir;
         char **environment = calloc((size_t)argc, sizeof(*environment));
         struct mc_publish *publishes = calloc((size_t)argc, sizeof(*publishes));
+        struct mc_mount *mounts = calloc((size_t)argc, sizeof(*mounts));
         size_t environment_count = 0U;
         size_t publish_count = 0U;
+        size_t mount_count = 0U;
+        char **seccomp_denies = NULL;
+        size_t seccomp_deny_count = 0U;
         unsigned int user = 0U;
         unsigned int group = 0U;
         int detach = 0;
@@ -411,13 +421,16 @@ rm_error:
         uint64_t swap_max = 0U;
         uint64_t cpu_quota = UINT64_C(50000);
         uint64_t pids_max = UINT64_C(128);
+        uint64_t capability_mask = 0U;
+        int readonly_root = 0;
         int network_bridge = 1;
         int command_index = -1;
         int index;
         struct mc_run_config config;
         int result;
 
-        if (environment == NULL || publishes == NULL) {
+        if (environment == NULL || publishes == NULL || mounts == NULL) {
+            free(mounts);
             free(publishes);
             free(environment);
             return MC_EXIT_INTERNAL;
@@ -429,6 +442,8 @@ rm_error:
             }
             if (strcmp(argv[index], "--detach") == 0) {
                 detach = 1;
+            } else if (strcmp(argv[index], "--read-only") == 0) {
+                readonly_root = 1;
             } else if (strcmp(argv[index], "--name") == 0 && index + 1 < argc) {
                 name = argv[++index];
                 if (!mc_valid_name(name)) {
@@ -509,6 +524,31 @@ rm_error:
                     }
                 }
                 publishes[publish_count++] = parsed;
+            } else if (strcmp(argv[index], "--cap-add") == 0 && index + 1 < argc) {
+                unsigned int capability;
+                if (!mc_capability_parse(argv[++index], &capability) || capability >= 64U) {
+                    free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE;
+                }
+                capability_mask |= UINT64_C(1) << capability;
+            } else if (strcmp(argv[index], "--bind") == 0 && index + 1 < argc) {
+                if (!mc_parse_bind_mount(argv[++index], &mounts[mount_count], &error)) {
+                    mc_error_print(&error, 0); free(mounts); free(publishes); free(environment);
+                    return MC_EXIT_USAGE;
+                }
+                ++mount_count;
+            } else if (strcmp(argv[index], "--tmpfs") == 0 && index + 1 < argc) {
+                if (!mc_parse_tmpfs_mount(argv[++index], &mounts[mount_count], &error)) {
+                    mc_error_print(&error, 0); free(mounts); free(publishes); free(environment);
+                    return MC_EXIT_USAGE;
+                }
+                ++mount_count;
+            } else if (strcmp(argv[index], "--seccomp-profile") == 0 && index + 1 < argc &&
+                       seccomp_denies == NULL) {
+                if (!mc_seccomp_profile_load(argv[++index], &seccomp_denies,
+                                             &seccomp_deny_count, &error)) {
+                    mc_error_print(&error, 0); free(mounts); free(publishes); free(environment);
+                    return MC_EXIT_USAGE;
+                }
             } else {
                 free(publishes); free(environment);
                 usage(stderr);
@@ -546,6 +586,12 @@ rm_error:
         config.swap_max = swap_max;
         config.cpu_quota = cpu_quota;
         config.pids_max = pids_max;
+        config.capability_mask = capability_mask;
+        config.readonly_root = readonly_root;
+        config.mounts = mounts;
+        config.mount_count = mount_count;
+        config.seccomp_denies = seccomp_denies;
+        config.seccomp_deny_count = seccomp_deny_count;
         config.network_bridge = network_bridge;
         config.ipv4_host = 0U;
         config.publishes = publishes;
@@ -575,11 +621,19 @@ rm_error:
             (void)printf("%s\n", id);
             free(environment);
             free(publishes);
+            while (mount_count > 0U) mc_mount_free(&mounts[--mount_count]);
+            free(mounts);
+            while (seccomp_deny_count > 0U) free(seccomp_denies[--seccomp_deny_count]);
+            free(seccomp_denies);
             return MC_EXIT_OK;
         }
         result = mc_launch_shim(&config, &error);
         free(environment);
         free(publishes);
+        while (mount_count > 0U) mc_mount_free(&mounts[--mount_count]);
+        free(mounts);
+        while (seccomp_deny_count > 0U) free(seccomp_denies[--seccomp_deny_count]);
+        free(seccomp_denies);
         if (result < 0) {
             mc_error_print(&error, 0);
             return error.code;

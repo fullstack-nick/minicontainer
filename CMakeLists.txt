@@ -12,12 +12,14 @@ pkg_check_modules(LIBARCHIVE REQUIRED IMPORTED_TARGET libarchive)
 pkg_check_modules(OPENSSL REQUIRED IMPORTED_TARGET openssl)
 pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 pkg_check_modules(JSONC REQUIRED IMPORTED_TARGET json-c)
+pkg_check_modules(SECCOMP REQUIRED IMPORTED_TARGET libseccomp)
 
 add_library(minicontainer_core STATIC
   src/image/import.c
   src/linux/cgroup.c
   src/linux/container.c
   src/linux/exec.c
+  src/linux/security.c
   src/network/netlink.c
   src/network/nft.c
   src/network/parse.c
@@ -28,12 +30,14 @@ add_library(minicontainer_core STATIC
   src/util/error.c
   src/util/fs.c
   src/util/id.c
+  src/util/mount.c
   src/util/resource.c
   src/util/subid.c
   src/util/validate.c)
 target_include_directories(minicontainer_core PUBLIC include)
 target_link_libraries(minicontainer_core PUBLIC PkgConfig::LIBARCHIVE PkgConfig::OPENSSL
   PkgConfig::SYSTEMD PkgConfig::JSONC)
+target_link_libraries(minicontainer_core PUBLIC PkgConfig::SECCOMP)
 target_compile_definitions(minicontainer_core PRIVATE _GNU_SOURCE _XOPEN_SOURCE=700)
 target_compile_definitions(minicontainer_core PRIVATE
   MC_VERSION="${PROJECT_VERSION}"
@@ -77,6 +81,7 @@ endif()
 
 install(TARGETS minicontainer RUNTIME DESTINATION bin)
 install(TARGETS minicontainer-shim RUNTIME DESTINATION libexec/minicontainer)
+install(FILES config/minicontainer.json DESTINATION etc/minicontainer RENAME config.json)
 
 set(CPACK_GENERATOR DEB)
 set(CPACK_PACKAGE_NAME minicontainer)

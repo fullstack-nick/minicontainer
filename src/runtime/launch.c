@@ -1,5 +1,6 @@
 #include "minicontainer/runtime.h"
 #include "minicontainer/fs.h"
+#include "minicontainer/security.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -103,6 +104,11 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
     static char bridge_value[] = "bridge";
     static char none_value[] = "none";
     static char publish_flag[] = "--publish";
+    static char capability_flag[] = "--cap-add";
+    static char readonly_flag[] = "--read-only";
+    static char bind_flag[] = "--bind";
+    static char tmpfs_flag[] = "--tmpfs";
+    static char seccomp_deny_flag[] = "--seccomp-deny";
     char user_value[32];
     char ready_value[32];
     char memory_value[32];
@@ -117,6 +123,7 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
     size_t index;
     char **arguments;
     char (*publish_values)[64];
+    char (*mount_values)[8192];
     pid_t child;
     int status;
     int readiness[2] = {-1, -1};
@@ -129,12 +136,17 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
     while (config->command[command_count] != NULL) {
         ++command_count;
     }
-    arguments = calloc(command_count + 29U + (config->environment_count * 2U) +
-                           (config->publish_count * 2U),
+    arguments = calloc(command_count + 111U + (config->environment_count * 2U) +
+                           (config->publish_count * 2U) + (config->mount_count * 2U) +
+                           (config->seccomp_deny_count * 2U),
                        sizeof(*arguments));
     publish_values = calloc(config->publish_count == 0U ? 1U : config->publish_count,
                             sizeof(*publish_values));
-    if (arguments == NULL || publish_values == NULL || shim_path(path, error) != 0) {
+    mount_values = calloc(config->mount_count == 0U ? 1U : config->mount_count,
+                          sizeof(*mount_values));
+    if (arguments == NULL || publish_values == NULL || mount_values == NULL ||
+        shim_path(path, error) != 0) {
+        free(mount_values);
         free(publish_values);
         free(arguments);
         if (error->code == 0) {
@@ -191,13 +203,38 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
         arguments[position++] = publish_flag;
         arguments[position++] = publish_values[index];
     }
+    for (index = 0U; index < 64U; ++index) {
+        if ((config->capability_mask & (UINT64_C(1) << index)) != 0U) {
+            arguments[position++] = capability_flag;
+            arguments[position++] = mc_capability_name((unsigned int)index);
+        }
+    }
+    if (config->readonly_root != 0) arguments[position++] = readonly_flag;
+    for (index = 0U; index < config->mount_count; ++index) {
+        if (config->mounts[index].type == MC_MOUNT_BIND) {
+            (void)snprintf(mount_values[index], sizeof(mount_values[index]), "%s:%s:%s",
+                           config->mounts[index].source, config->mounts[index].target,
+                           config->mounts[index].readonly != 0 ? "ro" : "rw");
+            arguments[position++] = bind_flag;
+        } else {
+            (void)snprintf(mount_values[index], sizeof(mount_values[index]), "%s:%llu",
+                           config->mounts[index].target,
+                           (unsigned long long)config->mounts[index].size);
+            arguments[position++] = tmpfs_flag;
+        }
+        arguments[position++] = mount_values[index];
+    }
+    for (index = 0U; index < config->seccomp_deny_count; ++index) {
+        arguments[position++] = seccomp_deny_flag;
+        arguments[position++] = config->seccomp_denies[index];
+    }
     if (config->detach != 0) {
         if (pipe2(readiness, O_CLOEXEC) != 0 ||
             fcntl(readiness[1], F_SETFD, 0) != 0 ||
             snprintf(ready_value, sizeof(ready_value), "%d", readiness[1]) < 0) {
             mc_error_set(error, MC_EXIT_RUNTIME, errno, "launch-shim", config->id,
                          "cannot create readiness channel");
-            free(publish_values); free(arguments);
+            free(mount_values); free(publish_values); free(arguments);
             return -1;
         }
         if (snprintf(log_directory, sizeof(log_directory), "%s/%s", mc_log_dir(), config->id) <
@@ -206,7 +243,7 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
             mc_mkdir_p(log_directory, 0750, error) != 0) {
             (void)close(readiness[0]);
             (void)close(readiness[1]);
-            free(publish_values); free(arguments);
+            free(mount_values); free(publish_values); free(arguments);
             return -1;
         }
         log_descriptor = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0640);
@@ -222,7 +259,7 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
             }
             (void)close(readiness[0]);
             (void)close(readiness[1]);
-            free(publish_values); free(arguments);
+            free(mount_values); free(publish_values); free(arguments);
             return -1;
         }
         arguments[position++] = detach_flag;
@@ -248,7 +285,7 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
         execv(path, arguments);
         _exit(126);
     }
-    free(publish_values); free(arguments);
+    free(mount_values); free(publish_values); free(arguments);
     if (log_descriptor >= 0) {
         (void)close(log_descriptor);
     }

@@ -14,6 +14,16 @@ struct mc_publish {
     uint8_t protocol;
 };
 
+enum mc_mount_type { MC_MOUNT_BIND = 1, MC_MOUNT_TMPFS = 2 };
+
+struct mc_mount {
+    enum mc_mount_type type;
+    char *source;
+    char *target;
+    uint64_t size;
+    int readonly;
+};
+
 struct mc_run_config {
     char *id;
     char *name;
@@ -30,6 +40,12 @@ struct mc_run_config {
     uint64_t swap_max;
     uint64_t cpu_quota;
     uint64_t pids_max;
+    uint64_t capability_mask;
+    int readonly_root;
+    struct mc_mount *mounts;
+    size_t mount_count;
+    char **seccomp_denies;
+    size_t seccomp_deny_count;
     int network_bridge;
     unsigned int ipv4_host;
     struct mc_publish *publishes;

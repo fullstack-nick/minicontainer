@@ -1,6 +1,7 @@
 #include "minicontainer/exec.h"
 
 #include "minicontainer/state.h"
+#include "minicontainer/security.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -12,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -58,6 +60,15 @@ static int install_environment(const struct mc_run_config *config) {
     return 0;
 }
 
+static void close_workload_descriptors(void) {
+    long maximum;
+    int descriptor;
+    (void)syscall(SYS_close_range, 3U, ~0U, 0U);
+    maximum = sysconf(_SC_OPEN_MAX);
+    if (maximum < 0 || maximum > 1048576L) maximum = 1048576L;
+    for (descriptor = 3; descriptor < (int)maximum; ++descriptor) (void)close(descriptor);
+}
+
 static int move_to_cgroup(const char *cgroup) {
     char path[PATH_MAX], value[32];
     int descriptor;
@@ -80,6 +91,10 @@ static int exec_worker(struct namespace_set *set, const char *cgroup,
     if (getenv("MC_SKIP_CGROUP") == NULL && move_to_cgroup(cgroup) != 0) {
         (void)fprintf(stderr, "minicontainer-exec: cgroup: %s\n", strerror(errno)); return 125;
     }
+    if (setgroups(0U, NULL) != 0) {
+        (void)fprintf(stderr, "minicontainer-exec: clear groups: %s\n", strerror(errno));
+        return 125;
+    }
 #define ENTER(fd, kind, label) do { if (setns((fd), (kind)) != 0) { \
     (void)fprintf(stderr, "minicontainer-exec: setns %s: %s\n", (label), strerror(errno)); \
     return 125; } } while (0)
@@ -96,13 +111,24 @@ static int exec_worker(struct namespace_set *set, const char *cgroup,
         if (fchdir(set->root) != 0 || chroot(".") != 0 || chdir(config->workdir) != 0) {
             (void)fprintf(stderr, "minicontainer-exec: enter root: %s\n", strerror(errno)); _exit(125);
         }
-        if (setresgid(config->group, config->group, config->group) != 0 ||
-            setresuid(config->user, config->user, config->user) != 0) {
-            (void)fprintf(stderr, "minicontainer-exec: identity: %s\n", strerror(errno)); _exit(125);
+        if (mc_security_prepare(config->capability_mask) != 0) {
+            (void)fprintf(stderr, "minicontainer-exec: security preparation: %s\n", strerror(errno)); _exit(125);
+        }
+        if (setresgid(config->group, config->group, config->group) != 0) {
+            (void)fprintf(stderr, "minicontainer-exec: group: %s\n", strerror(errno)); _exit(125);
+        }
+        if (setresuid(config->user, config->user, config->user) != 0) {
+            (void)fprintf(stderr, "minicontainer-exec: user: %s\n", strerror(errno)); _exit(125);
         }
         if (install_environment(config) != 0) {
             (void)fprintf(stderr, "minicontainer-exec: environment: %s\n", strerror(errno)); _exit(125);
         }
+        if (mc_security_apply(config->capability_mask, config->seccomp_denies,
+                              config->seccomp_deny_count) != 0) {
+            (void)fprintf(stderr, "minicontainer-exec: security policy: %s\n", strerror(errno));
+            _exit(125);
+        }
+        close_workload_descriptors();
         execvp(command[0], command);
         _exit(errno == ENOENT ? 127 : 126);
     }
