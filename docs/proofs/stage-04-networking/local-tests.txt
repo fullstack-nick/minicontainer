@@ -1,0 +1,11 @@
+PASS
+
+GCC Debug: configure, warning-clean build, and 4/4 CTest tests passed.
+Clang Debug: configure, warning-clean build, and 4/4 CTest tests passed.
+Release: fortified build and 4/4 CTest tests passed.
+Privileged WSL networking integration:
+PASS bridge/veth, IPAM, TCP/UDP publish, NAT, collisions, network-none, and cleanup
+
+The hosted-CI cgroup bypass was reproduced locally. External guest egress is deliberately
+proved on the controlled GCP network because GitHub-hosted runners do not guarantee
+forwarded guest traffic.

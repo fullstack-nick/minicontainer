@@ -1,0 +1,6 @@
+PASS
+
+The IAP tunnel was stopped, the HTTP demo container was force-removed, its isolated state
+workspace was deleted, and temporary test uploads no longer represent running resources.
+Cloud NAT and its router were destroyed through Terraform. Final checks found zero shims,
+scopes, veth peers, per-container nft rules, runtime directories, or test workspaces.

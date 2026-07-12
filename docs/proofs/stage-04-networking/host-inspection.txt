@@ -1,0 +1,16 @@
+PASS
+
+Final GCP inventory:
+- exactly one running VM: minicontainer-vm;
+- zone us-west1-a, machine type e2-micro;
+- no external IPv4 address;
+- no Cloud Router or Cloud NAT.
+
+Final VM inventory:
+- no minicontainer shim processes or systemd scopes;
+- no per-container veth interfaces;
+- no runtime container directories or temporary test workspaces;
+- mcbr0 retained as the runtime-owned base bridge at 10.44.0.1/24;
+- inet minicontainer base table retained with empty publish chains, default-deny forward
+  policy, established/egress rules, and base masquerade/hairpin rules only;
+- no full-container-ID nftables rules remained.

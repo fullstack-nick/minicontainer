@@ -1,0 +1,21 @@
+PASS
+
+The live GCP integration suite proved:
+- distinct bridge namespaces and deterministic 10.44.0.2/10.44.0.3 allocation;
+- veth attachment, default route, bridge reachability, and peer communication;
+- outbound DNS and HTTP while temporary Terraform Cloud NAT was enabled;
+- TCP HTTP and UDP echo publication;
+- undeclared-port denial and host/persisted publication collision rejection;
+- network-none loopback-only behavior;
+- stale-shim reconciliation, nft/veth cleanup, and IP lease reuse.
+
+Suite result:
+PASS bridge/veth, IPAM, TCP/UDP publish, NAT, collisions, network-none, and cleanup
+
+Authenticated workstation proof:
+gcloud compute start-iap-tunnel minicontainer-vm 8080 ...
+curl http://127.0.0.1:38080/
+Response: MINICONTAINER_HTTP
+
+The workload was a statically built fixture inside the container, published from container
+TCP 8080 to host TCP 8080. The IAP tunnel and demo container were removed after proof.

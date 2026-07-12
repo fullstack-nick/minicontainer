@@ -1,0 +1,11 @@
+PASS
+
+Temporary outbound window:
+- guarded account/project check passed;
+- plan: 2 to add, 0 to change, 0 to destroy;
+- created only minicontainer-temporary-router and minicontainer-temporary-nat.
+
+Final cleanup:
+- plan: 0 to add, 0 to change, 2 to destroy;
+- destroyed the temporary NAT and router;
+- final Terraform plan: No changes. Infrastructure matches configuration.
