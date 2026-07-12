@@ -217,10 +217,12 @@ int main(int argc, char **argv) {
             ++config.mount_count;
         } else if (strcmp(argv[index], "--seccomp-deny") == 0) {
             char *name = argv[++index];
+            char **resized;
             if (!mc_seccomp_name_valid(name)) break;
-            config.seccomp_denies = realloc(config.seccomp_denies,
+            resized = realloc(config.seccomp_denies,
                 (config.seccomp_deny_count + 1U) * sizeof(*config.seccomp_denies));
-            if (config.seccomp_denies == NULL) break;
+            if (resized == NULL) break;
+            config.seccomp_denies = resized;
             config.seccomp_denies[config.seccomp_deny_count++] = name;
         } else {
             break;

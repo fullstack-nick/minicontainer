@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(minicontainer VERSION 0.0.1 LANGUAGES C)
+project(minicontainer VERSION 1.0.0 LANGUAGES C)
 
 set(MC_GIT_COMMIT "unknown" CACHE STRING "Git commit embedded in the binary")
 
@@ -66,7 +66,7 @@ target_compile_options(minicontainer-shim PRIVATE
 include(CTest)
 if(BUILD_TESTING)
   add_test(NAME version COMMAND minicontainer version)
-  set_tests_properties(version PROPERTIES PASS_REGULAR_EXPRESSION "minicontainer 0.0.1")
+  set_tests_properties(version PROPERTIES PASS_REGULAR_EXPRESSION "minicontainer 1.0.0")
   add_test(NAME info COMMAND minicontainer info --json)
   set_tests_properties(info PROPERTIES PASS_REGULAR_EXPRESSION "cgroup_version")
   add_executable(unit_tests tests/unit/test_core.c)
@@ -96,6 +96,7 @@ set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 set(CPACK_PACKAGE_CONTACT "MiniContainer maintainers")
 set(CPACK_DEBIAN_PACKAGE_SECTION admin)
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_DEBUGINFO_PACKAGE ON)
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
   "${CMAKE_SOURCE_DIR}/packaging/postinst;${CMAKE_SOURCE_DIR}/packaging/prerm;${CMAKE_SOURCE_DIR}/packaging/postrm")
 set(CPACK_PACKAGE_FILE_NAME "minicontainer_${PROJECT_VERSION}_amd64")

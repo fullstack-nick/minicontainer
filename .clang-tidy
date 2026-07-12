@@ -1,0 +1,7 @@
+Checks: >
+  -*,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.*
+WarningsAsErrors: '*'
+HeaderFilterRegex: '^(.*[/\\])?(src|include)[/\\].*'
+FormatStyle: none

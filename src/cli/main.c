@@ -81,6 +81,14 @@ static int show_file(const char *path, const char *operation) {
     return MC_EXIT_OK;
 }
 
+static void free_run_allocations(char **environment, struct mc_publish *publishes,
+                                 struct mc_mount *mounts, size_t mount_count,
+                                 char **seccomp_denies, size_t seccomp_deny_count) {
+    while (mount_count > 0U) mc_mount_free(&mounts[--mount_count]);
+    while (seccomp_deny_count > 0U) free(seccomp_denies[--seccomp_deny_count]);
+    free(seccomp_denies); free(mounts); free(publishes); free(environment);
+}
+
 static int show_log(const char *path, const char *id, long tail, int follow) {
     FILE *stream = fopen(path, "r");
     char *line = NULL;
@@ -96,7 +104,10 @@ static int show_log(const char *path, const char *id, long tail, int follow) {
         if (tail < 0) (void)fputs(line, stdout);
         else if (tail > 0) {
             free(ring[next]); ring[next] = strdup(line);
-            if (ring[next] == NULL) { free(line); (void)fclose(stream); return MC_EXIT_INTERNAL; }
+            if (ring[next] == NULL) {
+                for (index = 0U; index < (size_t)tail; ++index) free(ring[index]);
+                free(ring); free(line); (void)fclose(stream); return MC_EXIT_INTERNAL;
+            }
             next = (next + 1U) % (size_t)tail;
             if (count < (size_t)tail) ++count;
         }
@@ -454,7 +465,9 @@ rm_error:
             } else if (strcmp(argv[index], "--name") == 0 && index + 1 < argc) {
                 name = argv[++index];
                 if (!mc_valid_name(name)) {
-                    free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE;
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
+                    usage(stderr); return MC_EXIT_USAGE;
                 }
             } else if (strcmp(argv[index], "--image") == 0 && index + 1 < argc) {
                 image = argv[++index];
@@ -463,20 +476,23 @@ rm_error:
             } else if (strcmp(argv[index], "--workdir") == 0 && index + 1 < argc) {
                 workdir = argv[++index];
                 if (workdir[0] != '/') {
-                    free(publishes); free(environment);
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
             } else if (strcmp(argv[index], "--user") == 0 && index + 1 < argc) {
                 if (!mc_parse_user(argv[++index], &user, &group)) {
-                    free(publishes); free(environment);
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
             } else if (strcmp(argv[index], "--env") == 0 && index + 1 < argc) {
                 char *assignment = argv[++index];
                 if (!mc_valid_environment(assignment)) {
-                    free(publishes); free(environment);
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
@@ -484,7 +500,8 @@ rm_error:
             } else if ((strcmp(argv[index], "--memory") == 0 ||
                         strcmp(argv[index], "--mem") == 0) && index + 1 < argc) {
                 if (!mc_parse_bytes(argv[++index], &memory_max)) {
-                    free(publishes); free(environment);
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
@@ -494,20 +511,23 @@ rm_error:
                 if (strcmp(swap, "0") == 0) {
                     swap_max = 0U;
                 } else if (!mc_parse_bytes(swap, &swap_max)) {
-                    free(publishes); free(environment);
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
             } else if ((strcmp(argv[index], "--cpus") == 0 ||
                         strcmp(argv[index], "--cpu") == 0) && index + 1 < argc) {
                 if (!mc_parse_cpu_quota(argv[++index], &cpu_quota)) {
-                    free(publishes); free(environment);
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
             } else if (strcmp(argv[index], "--pids-limit") == 0 && index + 1 < argc) {
                 if (!mc_parse_positive_u64(argv[++index], UINT64_C(4194304), &pids_max)) {
-                    free(publishes); free(environment);
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
@@ -515,37 +535,51 @@ rm_error:
                 const char *mode = argv[++index];
                 if (strcmp(mode, "bridge") == 0) network_bridge = 1;
                 else if (strcmp(mode, "none") == 0) network_bridge = 0;
-                else { free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE; }
+                else {
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
+                    usage(stderr); return MC_EXIT_USAGE;
+                }
             } else if (strcmp(argv[index], "--publish") == 0 && index + 1 < argc) {
                 size_t existing;
                 struct mc_publish parsed;
                 if (!mc_parse_publish(argv[++index], &parsed)) {
-                    free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE;
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
+                    usage(stderr); return MC_EXIT_USAGE;
                 }
                 for (existing = 0U; existing < publish_count; ++existing) {
                     if (publishes[existing].protocol == parsed.protocol &&
                         publishes[existing].host_port == parsed.host_port &&
                         (publishes[existing].host_ipv4 == 0U || parsed.host_ipv4 == 0U ||
                          publishes[existing].host_ipv4 == parsed.host_ipv4)) {
-                        free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE;
+                        free_run_allocations(environment, publishes, mounts, mount_count,
+                                             seccomp_denies, seccomp_deny_count);
+                        usage(stderr); return MC_EXIT_USAGE;
                     }
                 }
                 publishes[publish_count++] = parsed;
             } else if (strcmp(argv[index], "--cap-add") == 0 && index + 1 < argc) {
                 unsigned int capability;
                 if (!mc_capability_parse(argv[++index], &capability) || capability >= 64U) {
-                    free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE;
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
+                    usage(stderr); return MC_EXIT_USAGE;
                 }
                 capability_mask |= UINT64_C(1) << capability;
             } else if (strcmp(argv[index], "--bind") == 0 && index + 1 < argc) {
                 if (!mc_parse_bind_mount(argv[++index], &mounts[mount_count], &error)) {
-                    mc_error_print(&error, 0); free(mounts); free(publishes); free(environment);
+                    mc_error_print(&error, 0);
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
                     return MC_EXIT_USAGE;
                 }
                 ++mount_count;
             } else if (strcmp(argv[index], "--tmpfs") == 0 && index + 1 < argc) {
                 if (!mc_parse_tmpfs_mount(argv[++index], &mounts[mount_count], &error)) {
-                    mc_error_print(&error, 0); free(mounts); free(publishes); free(environment);
+                    mc_error_print(&error, 0);
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
                     return MC_EXIT_USAGE;
                 }
                 ++mount_count;
@@ -553,11 +587,14 @@ rm_error:
                        seccomp_denies == NULL) {
                 if (!mc_seccomp_profile_load(argv[++index], &seccomp_denies,
                                              &seccomp_deny_count, &error)) {
-                    mc_error_print(&error, 0); free(mounts); free(publishes); free(environment);
+                    mc_error_print(&error, 0);
+                    free_run_allocations(environment, publishes, mounts, mount_count,
+                                         seccomp_denies, seccomp_deny_count);
                     return MC_EXIT_USAGE;
                 }
             } else {
-                free(publishes); free(environment);
+                free_run_allocations(environment, publishes, mounts, mount_count,
+                                     seccomp_denies, seccomp_deny_count);
                 usage(stderr);
                 return MC_EXIT_USAGE;
             }
@@ -567,10 +604,12 @@ rm_error:
             mc_generate_id(id, &error) != 0) {
             if (error.code != 0) {
                 mc_error_print(&error, 0);
-                free(publishes); free(environment);
+                free_run_allocations(environment, publishes, mounts, mount_count,
+                                     seccomp_denies, seccomp_deny_count);
                 return error.code;
             }
-            free(publishes); free(environment);
+            free_run_allocations(environment, publishes, mounts, mount_count,
+                                 seccomp_denies, seccomp_deny_count);
             usage(stderr);
             return MC_EXIT_USAGE;
         }
@@ -605,7 +644,9 @@ rm_error:
         config.publish_count = publish_count;
         config.command = &argv[command_index];
         if (network_bridge == 0 && publish_count > 0U) {
-            free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE;
+            free_run_allocations(environment, publishes, mounts, mount_count,
+                                 seccomp_denies, seccomp_deny_count);
+            usage(stderr); return MC_EXIT_USAGE;
         }
         {
             struct mc_state_lock registry = {-1};
@@ -620,7 +661,10 @@ rm_error:
                 struct mc_error cleanup_error = {0};
                 mc_error_print(&error, 0); mc_state_unlock(&container);
                 (void)mc_state_remove(id, &cleanup_error);
-                mc_state_unlock(&registry); free(publishes); free(environment); return error.code;
+                mc_state_unlock(&registry);
+                free_run_allocations(environment, publishes, mounts, mount_count,
+                                     seccomp_denies, seccomp_deny_count);
+                return error.code;
             }
             mc_state_unlock(&container); mc_state_unlock(&registry);
         }

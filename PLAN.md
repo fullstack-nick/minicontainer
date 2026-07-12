@@ -292,7 +292,7 @@ CMake presets provide `dev-gcc`, `dev-clang`, `asan-ubsan`, `coverage`, `fuzz`, 
 4. **Network tests:** bridge address, veth movement, outbound NAT, network-none isolation, TCP/UDP port publishing, collision rejection, and nft cleanup.
 5. **Security tests:** malicious archives, traversal paths, forbidden bind mounts, capability absence, `no_new_privs`, seccomp denied/allowed probes, FD leakage, symlink races, PID reuse simulation, and non-root refusal.
 6. **Failure-injection tests:** kill the CLI or shim at each setup checkpoint, rerun reconciliation, and prove no unsafe mounts, veths, nft rules, cgroups, leases, or locked state remain.
-7. **Stress tests:** 100 sequential containers, bounded parallel create/run/rm cycles, repeated exec/stop races, log pressure, PID pressure, memory OOM, CPU throttling, and 24-hour live soak.
+7. **Stress tests:** 100 sequential containers, bounded parallel create/run/rm cycles, repeated exec/stop races, log pressure, PID pressure, memory OOM, CPU throttling, and a 30-minute live soak.
 8. **Fuzz tests:** libFuzzer targets for numeric/CLI parsing, JSON state/config parsing, archive-entry validation, seccomp-profile parsing, IP/port parsing, and shim messages, with fixed CI smoke duration and longer release corpus runs.
 9. **Static and dynamic analysis:** clang-tidy, clang static analyzer, cppcheck, GitHub CodeQL, ASan, UBSan, Valgrind, gcovr branch coverage, ShellCheck, actionlint, Terraform fmt/validate/tflint, gitleaks, and dependency review.
 
@@ -476,7 +476,7 @@ Deliverables:
 - deterministic release package, debug symbols, SBOM, checksums, and GitHub v1.0.0 release;
 - benchmark cold start, steady-state memory, run/remove throughput, exec latency, CPU-limit accuracy, and HTTP overhead;
 - stop `minicontainer-vm`, resize that same VM in place from `e2-micro` to `n2-standard-16`, run the exact release artifact through the benchmark and heavy stress gates, then stop and resize the same VM back to `e2-micro` before the stage can pass;
-- run the 24-hour `e2-micro` soak and inspect kernel/runtime logs afterward;
+- run a 30-minute `e2-micro` soak and inspect kernel/runtime logs afterward;
 - produce architecture diagrams, syscall walkthrough, comparison table, terminal recording, demo GIF/video, resume bullet, and polished README;
 - audit public Git history and artifacts for secrets/private data;
 - verify the final GCP inventory contains exactly one running `e2-micro` workload VM and no other development/benchmark compute;
@@ -566,6 +566,7 @@ The demo sequence is fixed: import pinned Alpine rootfs; run an isolated shell c
 - 2026-07-12: Initial authoritative plan created before any implementation, as required by the objective.
 - 2026-07-12: Current web research and live environment discovery completed. Locked systemd delegated cgroups, raw `clone3`, shifted user mapping, overlay/pivot-root filesystem, seccomp/capability model, rtnetlink+nftables networking, Alpine 3.24.1 fixture, Ubuntu 24.04 parity, `us-west1-a`, IAP-only final access, transient Cloud NAT, in-place N2 benchmarking, reproducible Debian packaging, and exact Terraform/provider families. Planning gate closed; Stage 0 implementation authorized.
 - 2026-07-12: Operator explicitly authorized automatic in-place escalation from `e2-micro` through the smallest sufficient size up to `n2-standard-16` whenever the free-tier VM constrains development, plus deliberate N2 stress testing. Final cleanup remains non-negotiable: exactly one running `e2-micro`, with all other development/load resources deleted.
+- 2026-07-12: Operator replaced the planned 24-hour final soak with a bounded 30-minute `e2-micro` soak. The gate still requires uninterrupted workload checks plus post-run kernel and runtime log inspection.
 - 2026-07-12: Live billing-account discovery showed the account currency is TRY, so the API cannot accept a USD-denominated budget. Locked the budget at TRY 470, approximately USD 10 at the observed 46.98 USD/TRY rate; threshold percentages remain unchanged.
 - 2026-07-12: Stage 2 passed locally and live with systemd-delegated cgroups v2, exact limit readback, JSON statistics, CPU throttling, memory OOM accounting, PID exhaustion, signal cleanup, and a zero-orphan GCP inspection. The e2-micro remained healthy, so no temporary resize was needed.
 - 2026-07-12: Stage 3 passed locally and live with durable lifecycle state, name/prefix resolution, namespace-preserving exec, root-only shim control, pidfd identity checks, graceful and forced stop, persistent overlays, concurrent conflict handling, shim/CLI crash recovery, gc/restart, and zero-orphan GCP inspection. The e2-micro remained healthy.
