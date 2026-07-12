@@ -2,11 +2,16 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! git -C "$repo_root" diff --quiet || ! git -C "$repo_root" diff --cached --quiet; then
+  printf 'refusing release build from a dirty worktree\n' >&2
+  exit 2
+fi
 commit="$(git -C "$repo_root" rev-parse HEAD)"
+export SOURCE_DATE_EPOCH="$(git -C "$repo_root" show -s --format=%ct HEAD)"
 build_dir="$repo_root/build/release"
 dist_dir="$repo_root/dist"
 
-cmake -S "$repo_root" -B "$build_dir" -G Ninja \
+cmake --fresh -S "$repo_root" -B "$build_dir" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DMC_GIT_COMMIT="$commit"
 cmake --build "$build_dir"
 ctest --test-dir "$build_dir" --output-on-failure
@@ -15,6 +20,9 @@ cmake --build "$build_dir" --target package
 mkdir -p "$dist_dir"
 cp "$build_dir/minicontainer_0.0.1_amd64.deb" "$dist_dir/"
 (cd "$dist_dir" && sha256sum minicontainer_0.0.1_amd64.deb > minicontainer_0.0.1_amd64.deb.sha256)
-printf '{"version":"0.0.1","git_commit":"%s","compiler":"%s"}\n' \
-  "$commit" "$(cc --version | head -n1)" > "$dist_dir/build-manifest.json"
-
+digest="$(sha256sum "$dist_dir/minicontainer_0.0.1_amd64.deb" | cut -d' ' -f1)"
+jq -n --arg version '0.0.1' --arg commit "$commit" --arg digest "$digest" \
+  --arg compiler "$(cc --version | head -n1)" \
+  '{version:$version,git_commit:$commit,sha256:$digest,compiler:$compiler}' \
+  > "$dist_dir/build-manifest.json"
+syft "file:$dist_dir/minicontainer_0.0.1_amd64.deb" -o spdx-json="$dist_dir/minicontainer_0.0.1_amd64.spdx.json"

@@ -24,6 +24,7 @@ Observed output:
 - Artifact SHA-256: `25DB3B62BBFC96D7968F98A230C5BD87A41CCDFE071A6611277F09EBC4EA90BA`.
 - Terraform 1.15 initialized with locked Google provider 7.39.0 and `terraform validate` passed.
 - The GCP mutation guard passed with the expected active account/project and rejected a deliberately wrong account.
+- A privileged WSL2 capability audit passed for systemd PID 1, cgroups v2, user/mount/network namespaces, overlayfs, libseccomp, libsystemd, transient systemd delegation, and nftables transaction parsing.
 
 ## Current GCP gate
 
