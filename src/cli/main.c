@@ -6,14 +6,15 @@
 #include "minicontainer/runtime.h"
 #include "minicontainer/resource.h"
 #include "minicontainer/stats.h"
+#include "minicontainer/state.h"
 #include "minicontainer/validate.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
+#include <signal.h>
 #include <unistd.h>
 
 #ifndef MC_VERSION
@@ -33,22 +34,15 @@ static void usage(FILE *stream) {
                   "[--workdir PATH] [--user UID[:GID]] [--memory BYTES] "
                   "[--memory-swap BYTES] [--cpus DECIMAL] [--pids-limit COUNT] "
                   "-- COMMAND [ARG...]\n"
+                  "  minicontainer create [--name NAME] --image NAME [run flags] -- COMMAND [ARG...]\n"
+                  "  minicontainer start ID\n"
+                  "  minicontainer stop [--time SECONDS] ID\n"
+                  "  minicontainer kill [--signal SIGNAL] ID\n"
+                  "  minicontainer rm [--force] ID\n"
+                  "  minicontainer ps [--all] [--json]\n"
                   "  minicontainer inspect ID\n"
                   "  minicontainer logs ID\n"
                   "  minicontainer stats [--no-stream] [--json] ID...\n");
-}
-
-static int valid_full_id(const char *id) {
-    size_t index;
-    if (id == NULL || strlen(id) != 32U) {
-        return 0;
-    }
-    for (index = 0U; index < 32U; ++index) {
-        if (!isdigit((unsigned char)id[index]) && !(id[index] >= 'a' && id[index] <= 'f')) {
-            return 0;
-        }
-    }
-    return 1;
 }
 
 static int show_file(const char *path, const char *operation) {
@@ -102,6 +96,132 @@ int main(int argc, char **argv) {
     if (strcmp(argv[1], "info") == 0) {
         return mc_print_info(json);
     }
+    if (strcmp(argv[1], "ps") == 0) {
+        int include_stopped = 0;
+        int index;
+        for (index = 2; index < argc; ++index) {
+            if (strcmp(argv[index], "--all") == 0) include_stopped = 1;
+            else if (strcmp(argv[index], "--json") == 0) json = 1;
+            else { usage(stderr); return MC_EXIT_USAGE; }
+        }
+        if (mc_state_print_list(include_stopped, json, &error) != 0) {
+            mc_error_print(&error, json); return error.code;
+        }
+        return MC_EXIT_OK;
+    }
+    if (strcmp(argv[1], "kill") == 0 && (argc == 3 || argc == 5)) {
+        int signal_number = SIGKILL;
+        const char *reference = argv[argc - 1];
+        if (argc == 5) {
+            const char *value;
+            if (strcmp(argv[2], "--signal") != 0) { usage(stderr); return MC_EXIT_USAGE; }
+            value = argv[3];
+            if (strcmp(value, "TERM") == 0 || strcmp(value, "SIGTERM") == 0) signal_number = SIGTERM;
+            else if (strcmp(value, "KILL") == 0 || strcmp(value, "SIGKILL") == 0) signal_number = SIGKILL;
+            else if (strcmp(value, "INT") == 0 || strcmp(value, "SIGINT") == 0) signal_number = SIGINT;
+            else if (strcmp(value, "HUP") == 0 || strcmp(value, "SIGHUP") == 0) signal_number = SIGHUP;
+            else if (strcmp(value, "QUIT") == 0 || strcmp(value, "SIGQUIT") == 0) signal_number = SIGQUIT;
+            else { usage(stderr); return MC_EXIT_USAGE; }
+        }
+        if (mc_state_signal(reference, signal_number, &error) != 0) {
+            mc_error_print(&error, 0); return error.code;
+        }
+        return MC_EXIT_OK;
+    }
+    if (strcmp(argv[1], "stop") == 0 && (argc == 3 || argc == 5)) {
+        uint64_t timeout_seconds = 10U;
+        const char *reference = argv[argc - 1];
+        char resolved[33], status[16];
+        unsigned int attempt;
+        if (argc == 5 && (strcmp(argv[2], "--time") != 0 ||
+            !mc_parse_positive_u64(argv[3], UINT64_C(3600), &timeout_seconds))) {
+            usage(stderr); return MC_EXIT_USAGE;
+        }
+        if (mc_state_resolve(reference, resolved, &error) != 0 ||
+            mc_state_signal(resolved, SIGTERM, &error) != 0) {
+            mc_error_print(&error, 0); return error.code;
+        }
+        for (attempt = 0U; attempt < (unsigned int)(timeout_seconds * 10U); ++attempt) {
+            if (mc_state_get_status(resolved, status, NULL, &error) == 0 &&
+                strcmp(status, "running") != 0) return MC_EXIT_OK;
+            (void)usleep(100000U);
+        }
+        if (mc_state_signal(resolved, SIGKILL, &error) != 0) {
+            mc_error_print(&error, 0); return error.code;
+        }
+        return MC_EXIT_OK;
+    }
+    if (strcmp(argv[1], "rm") == 0 && (argc == 3 || argc == 4)) {
+        int force = 0;
+        const char *reference;
+        char resolved[33], status[16];
+        struct mc_state_lock registry = {-1}, container = {-1};
+        if (argc == 4) {
+            if (strcmp(argv[2], "--force") != 0) { usage(stderr); return MC_EXIT_USAGE; }
+            force = 1;
+        }
+        reference = argv[argc - 1];
+        if (mc_state_registry_lock(&registry, &error) != 0 ||
+            mc_state_resolve(reference, resolved, &error) != 0 ||
+            mc_state_container_lock(resolved, &container, &error) != 0 ||
+            mc_state_get_status(resolved, status, NULL, &error) != 0) goto rm_error;
+        if (strcmp(status, "running") == 0) {
+            unsigned int attempt;
+            if (force == 0) {
+                mc_error_set(&error, MC_EXIT_CONFLICT, EBUSY, "remove-container", resolved,
+                             "running container requires --force");
+                goto rm_error;
+            }
+            if (mc_state_signal(resolved, SIGKILL, &error) != 0) goto rm_error;
+            for (attempt = 0U; attempt < 100U; ++attempt) {
+                if (mc_state_get_status(resolved, status, NULL, &error) == 0 &&
+                    strcmp(status, "running") != 0) break;
+                (void)usleep(50000U);
+            }
+            if (strcmp(status, "running") == 0) {
+                mc_error_set(&error, MC_EXIT_RUNTIME, ETIMEDOUT, "remove-container", resolved,
+                             "forced container did not stop");
+                goto rm_error;
+            }
+        }
+        mc_state_unlock(&container);
+        if (mc_state_remove(resolved, &error) != 0) goto rm_error;
+        mc_state_unlock(&registry);
+        return MC_EXIT_OK;
+rm_error:
+        mc_error_print(&error, 0); mc_state_unlock(&container); mc_state_unlock(&registry);
+        return error.code;
+    }
+    if (strcmp(argv[1], "start") == 0 && argc == 3) {
+        struct mc_run_config stored = {0};
+        struct mc_state_lock registry = {-1};
+        struct mc_state_lock container = {-1};
+        char image[PATH_MAX];
+        char status[16];
+        int result;
+        if (geteuid() != 0) return MC_EXIT_PERMISSION;
+        if (mc_state_registry_lock(&registry, &error) != 0 ||
+            mc_state_load_config(argv[2], &stored, image, &error) != 0 ||
+            mc_state_container_lock(stored.id, &container, &error) != 0 ||
+            mc_state_get_status(stored.id, status, NULL, &error) != 0) {
+            mc_error_print(&error, 0); mc_state_unlock(&container);
+            mc_state_unlock(&registry); mc_state_free_config(&stored); return error.code;
+        }
+        if (strcmp(status, "created") != 0 && strcmp(status, "stopped") != 0) {
+            mc_error_set(&error, MC_EXIT_CONFLICT, EBUSY, "start", stored.id,
+                         "container is not in a startable state");
+            mc_error_print(&error, 0); mc_state_unlock(&container);
+            mc_state_unlock(&registry); mc_state_free_config(&stored);
+            return error.code;
+        }
+        stored.detach = 1;
+        result = mc_launch_shim(&stored, &error);
+        if (result == 0) (void)printf("%s\n", stored.id);
+        else mc_error_print(&error, 0);
+        mc_state_unlock(&container); mc_state_unlock(&registry);
+        mc_state_free_config(&stored);
+        return result < 0 ? error.code : result;
+    }
     if (strcmp(argv[1], "stats") == 0 && argc >= 3) {
         int no_stream = 0;
         int first_id = 2;
@@ -115,7 +235,9 @@ int main(int argc, char **argv) {
         if (first_id >= argc) { usage(stderr); return MC_EXIT_USAGE; }
         do {
             for (index = first_id; index < argc; ++index) {
-                if (!valid_full_id(argv[index]) || mc_stats_print(argv[index], json, &error) != 0) {
+                char resolved[33];
+                if (mc_state_resolve(argv[index], resolved, &error) != 0 ||
+                    mc_stats_print(resolved, json, &error) != 0) {
                     if (error.code != 0) { mc_error_print(&error, json); return error.code; }
                     usage(stderr); return MC_EXIT_USAGE;
                 }
@@ -126,17 +248,18 @@ int main(int argc, char **argv) {
     }
     if ((strcmp(argv[1], "logs") == 0 || strcmp(argv[1], "inspect") == 0) && argc == 3) {
         char path[PATH_MAX];
+        char resolved[33];
         const char *kind = argv[1];
         int length;
-        if (!valid_full_id(argv[2])) {
-            usage(stderr);
-            return MC_EXIT_USAGE;
+        if (mc_state_resolve(argv[2], resolved, &error) != 0) {
+            mc_error_print(&error, 0);
+            return error.code;
         }
         if (strcmp(kind, "logs") == 0) {
-            length = snprintf(path, sizeof(path), "%s/%s/container.log", mc_log_dir(), argv[2]);
+            length = snprintf(path, sizeof(path), "%s/%s/container.log", mc_log_dir(), resolved);
         } else {
             length = snprintf(path, sizeof(path), "%s/containers/%s/state.json", mc_state_dir(),
-                              argv[2]);
+                              resolved);
         }
         if (length < 0 || (size_t)length >= sizeof(path)) {
             return MC_EXIT_USAGE;
@@ -167,8 +290,9 @@ int main(int argc, char **argv) {
         }
         return MC_EXIT_OK;
     }
-    if (strcmp(argv[1], "run") == 0) {
+    if (strcmp(argv[1], "run") == 0 || strcmp(argv[1], "create") == 0) {
         const char *image = NULL;
+        char *name = NULL;
         char *hostname = NULL;
         char generated_hostname[16];
         char id[33];
@@ -180,6 +304,7 @@ int main(int argc, char **argv) {
         unsigned int user = 0U;
         unsigned int group = 0U;
         int detach = 0;
+        const int create_only = strcmp(argv[1], "create") == 0;
         uint64_t memory_max = UINT64_C(128) * UINT64_C(1024) * UINT64_C(1024);
         uint64_t swap_max = 0U;
         uint64_t cpu_quota = UINT64_C(50000);
@@ -199,6 +324,11 @@ int main(int argc, char **argv) {
             }
             if (strcmp(argv[index], "--detach") == 0) {
                 detach = 1;
+            } else if (strcmp(argv[index], "--name") == 0 && index + 1 < argc) {
+                name = argv[++index];
+                if (!mc_valid_name(name)) {
+                    free(environment); usage(stderr); return MC_EXIT_USAGE;
+                }
             } else if (strcmp(argv[index], "--image") == 0 && index + 1 < argc) {
                 image = argv[++index];
             } else if (strcmp(argv[index], "--hostname") == 0 && index + 1 < argc) {
@@ -277,6 +407,7 @@ int main(int argc, char **argv) {
             hostname = generated_hostname;
         }
         config.id = id;
+        config.name = name;
         config.rootfs = rootfs;
         config.hostname = hostname;
         config.workdir = workdir;
@@ -291,6 +422,23 @@ int main(int argc, char **argv) {
         config.cpu_quota = cpu_quota;
         config.pids_max = pids_max;
         config.command = &argv[command_index];
+        {
+            struct mc_state_lock registry = {-1};
+            struct mc_state_lock container = {-1};
+            if (mc_state_registry_lock(&registry, &error) != 0 ||
+                mc_state_container_lock(id, &container, &error) != 0 ||
+                mc_state_save_config(&config, image, &error) != 0 ||
+                (create_only != 0 && mc_state_mark_created(id, &error) != 0)) {
+                mc_error_print(&error, 0); mc_state_unlock(&container);
+                mc_state_unlock(&registry); free(environment); return error.code;
+            }
+            mc_state_unlock(&container); mc_state_unlock(&registry);
+        }
+        if (create_only != 0) {
+            (void)printf("%s\n", id);
+            free(environment);
+            return MC_EXIT_OK;
+        }
         result = mc_launch_shim(&config, &error);
         free(environment);
         if (result < 0) {

@@ -512,16 +512,8 @@ static int remove_entry(const char *path, const struct stat *metadata, int type,
     return remove(path);
 }
 
-static void cleanup_paths(const struct runtime_paths *paths) {
-    (void)chmod(paths->upper, 0700);
-    (void)chmod(paths->work, 0700);
-    (void)nftw(paths->base, remove_entry, 32, FTW_DEPTH | FTW_PHYS);
-}
-
 static void cleanup_ephemeral(const struct runtime_paths *paths) {
-    (void)chmod(paths->upper, 0700);
     (void)chmod(paths->work, 0700);
-    (void)nftw(paths->upper, remove_entry, 32, FTW_DEPTH | FTW_PHYS);
     (void)nftw(paths->work, remove_entry, 32, FTW_DEPTH | FTW_PHYS);
     (void)nftw(paths->merged, remove_entry, 32, FTW_DEPTH | FTW_PHYS);
 }
@@ -530,14 +522,30 @@ static int write_state(const struct runtime_paths *paths, const struct mc_run_co
                        const struct mc_cgroup *cgroup, const char *state, pid_t init_pid, int exit_code,
                        struct mc_error *error) {
     char document[1024];
+    char stat_path[64];
+    char stat_line[4096];
+    unsigned long long start_time = 0ULL;
+    FILE *stat_stream;
+    (void)snprintf(stat_path, sizeof(stat_path), "/proc/%ld/stat", (long)getpid());
+    stat_stream = fopen(stat_path, "r");
+    if (stat_stream != NULL && fgets(stat_line, sizeof(stat_line), stat_stream) != NULL) {
+        char *token = strrchr(stat_line, ')');
+        int field = 3;
+        if (token != NULL) token = strtok(token + 2, " ");
+        while (token != NULL && field < 22) { token = strtok(NULL, " "); ++field; }
+        if (token != NULL) start_time = strtoull(token, NULL, 10);
+    }
+    if (stat_stream != NULL) (void)fclose(stat_stream);
     const int length = snprintf(document, sizeof(document),
                                 "{\"schema_version\":1,\"id\":\"%s\","
                                 "\"status\":\"%s\",\"shim_pid\":%ld,"
+                                "\"shim_start_time\":%llu,"
                                 "\"init_pid\":%ld,\"exit_code\":%d,"
                                 "\"resources\":{\"memory_max\":%llu,\"swap_max\":%llu,"
                                 "\"cpu_quota\":%llu,\"cpu_period\":100000,\"pids_max\":%llu},"
                                 "\"cgroup_path\":\"%s\"}\n",
-                                config->id, state, (long)getpid(), (long)init_pid, exit_code,
+                                config->id, state, (long)getpid(), start_time,
+                                (long)init_pid, exit_code,
                                 (unsigned long long)config->memory_max,
                                 (unsigned long long)config->swap_max,
                                 (unsigned long long)config->cpu_quota,
@@ -548,7 +556,7 @@ static int write_state(const struct runtime_paths *paths, const struct mc_run_co
                      "state document is too large");
         return -1;
     }
-    return mc_write_atomic(paths->state, document, (size_t)length, 0640, error);
+    return mc_write_atomic(paths->state, document, (size_t)length, 0600, error);
 }
 
 int mc_container_run(const struct mc_run_config *config, struct mc_error *error) {
@@ -622,7 +630,8 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
         const int saved = errno;
         (void)close(barrier[1]);
         (void)close(ready[0]);
-        cleanup_paths(&paths);
+        cleanup_ephemeral(&paths);
+        (void)chown(paths.base, 0, 0);
         mc_cgroup_destroy(&cgroup);
         mc_error_set(error, MC_EXIT_RUNTIME, saved, "clone3", config->id,
                      "cannot create container namespaces");
@@ -641,7 +650,8 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
         if (pidfd >= 0) {
             (void)close(pidfd);
         }
-        cleanup_paths(&paths);
+        cleanup_ephemeral(&paths);
+        (void)chown(paths.base, 0, 0);
         mc_cgroup_destroy(&cgroup);
         mc_error_set(error, MC_EXIT_RUNTIME, saved, "uid-gid-map", config->id,
                      "cannot configure subordinate identity mapping");
@@ -653,8 +663,7 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     } while (ready_count < 0 && errno == EINTR);
     (void)close(ready[0]);
     if (ready_count == 1 && ready_byte == '1') {
-        if (config->detach != 0 &&
-            write_state(&paths, config, &cgroup, "running", child, 0, error) != 0) {
+        if (write_state(&paths, config, &cgroup, "running", child, 0, error) != 0) {
             (void)kill(child, SIGKILL);
         }
         if (config->ready_fd >= 0) {
@@ -698,18 +707,14 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     } else {
         exit_code = MC_EXIT_RUNTIME;
     }
-    if (config->detach != 0) {
-        cleanup_ephemeral(&paths);
-        if (chown(paths.base, 0, 0) != 0) {
-            mc_error_set(error, MC_EXIT_RUNTIME, errno, "cleanup", paths.base,
-                         "cannot restore state directory ownership");
-        }
-        (void)chmod(paths.base, 0750);
-        (void)write_state(&paths, config, &cgroup, ready_count == 1 ? "stopped" : "failed",
-                          child, exit_code, error);
-    } else {
-        cleanup_paths(&paths);
+    cleanup_ephemeral(&paths);
+    if (chown(paths.base, 0, 0) != 0) {
+        mc_error_set(error, MC_EXIT_RUNTIME, errno, "cleanup", paths.base,
+                     "cannot restore state directory ownership");
     }
+    (void)chmod(paths.base, 0700);
+    (void)write_state(&paths, config, &cgroup, ready_count == 1 ? "stopped" : "failed",
+                      child, exit_code, error);
     if (status < 0) {
         return -1;
     }

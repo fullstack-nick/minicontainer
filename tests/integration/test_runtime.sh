@@ -90,9 +90,13 @@ status=$?
 set -e
 test "$status" -eq 33
 
-if [[ -d "$workspace/state/containers" ]]; then
-  test -z "$(find "$workspace/state/containers" -mindepth 1 -print -quit)"
-fi
+while IFS= read -r container_dir; do
+  grep -q '"status":"stopped"' "$container_dir/state.json"
+  test -f "$container_dir/config.json"
+  test -d "$container_dir/upper"
+  test ! -e "$container_dir/work"
+  test ! -e "$container_dir/merged"
+done < <(find "$workspace/state/containers" -mindepth 1 -maxdepth 1 -type d)
 
 detached_id="$("$binary" run --detach --image alpine-runtime -- /bin/sh -c \
   'echo DETACHED_START; sleep 0.2; echo DETACHED_DONE; exit 7')"
@@ -107,7 +111,7 @@ grep -q '"exit_code":7' "$state_file"
 "$binary" inspect "$detached_id" | grep -q '"status":"stopped"'
 "$binary" logs "$detached_id" | grep -q '^DETACHED_START$'
 "$binary" logs "$detached_id" | grep -q '^DETACHED_DONE$'
-test ! -e "$workspace/state/containers/$detached_id/upper"
+test -d "$workspace/state/containers/$detached_id/upper"
 test ! -e "$workspace/state/containers/$detached_id/work"
 test ! -e "$workspace/state/containers/$detached_id/merged"
-printf 'PASS isolated foreground runtime and cleanup\n'
+printf 'PASS isolated runtime, durable state, and ephemeral cleanup\n'

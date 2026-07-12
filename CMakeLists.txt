@@ -11,6 +11,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBARCHIVE REQUIRED IMPORTED_TARGET libarchive)
 pkg_check_modules(OPENSSL REQUIRED IMPORTED_TARGET openssl)
 pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+pkg_check_modules(JSONC REQUIRED IMPORTED_TARGET json-c)
 
 add_library(minicontainer_core STATIC
   src/image/import.c
@@ -19,6 +20,7 @@ add_library(minicontainer_core STATIC
   src/linux/stats.c
   src/runtime/launch.c
   src/runtime/info.c
+  src/state/store.c
   src/util/error.c
   src/util/fs.c
   src/util/id.c
@@ -27,7 +29,7 @@ add_library(minicontainer_core STATIC
   src/util/validate.c)
 target_include_directories(minicontainer_core PUBLIC include)
 target_link_libraries(minicontainer_core PUBLIC PkgConfig::LIBARCHIVE PkgConfig::OPENSSL
-  PkgConfig::SYSTEMD)
+  PkgConfig::SYSTEMD PkgConfig::JSONC)
 target_compile_definitions(minicontainer_core PRIVATE _GNU_SOURCE _XOPEN_SOURCE=700)
 
 add_executable(minicontainer src/cli/main.c)

@@ -50,7 +50,10 @@ int mc_mkdir_p(const char *path, mode_t mode, struct mc_error *error) {
 int mc_write_atomic(const char *path, const void *data, size_t length, mode_t mode,
                     struct mc_error *error) {
     char temporary[PATH_MAX];
+    char directory[PATH_MAX];
+    char *slash;
     int descriptor;
+    int directory_descriptor;
     size_t written = 0U;
 
     if (snprintf(temporary, sizeof(temporary), "%s.tmp.%ld", path, (long)getpid()) < 0 ||
@@ -76,11 +79,42 @@ int mc_write_atomic(const char *path, const void *data, size_t length, mode_t mo
         }
         written += (size_t)result;
     }
-    if (fsync(descriptor) != 0 || close(descriptor) != 0 || rename(temporary, path) != 0) {
+    if (fsync(descriptor) != 0) {
+        const int saved = errno;
+        (void)close(descriptor);
+        (void)unlink(temporary);
+        mc_error_set(error, MC_EXIT_RUNTIME, saved, "atomic-write", path,
+                     "file sync failed");
+        return -1;
+    }
+    if (close(descriptor) != 0 || rename(temporary, path) != 0) {
         const int saved = errno;
         (void)unlink(temporary);
         mc_error_set(error, MC_EXIT_RUNTIME, saved, "atomic-write", path,
-                     "commit failed");
+                     "atomic rename failed");
+        return -1;
+    }
+    if (strlen(path) >= sizeof(directory)) {
+        mc_error_set(error, MC_EXIT_INTERNAL, ENAMETOOLONG, "atomic-write", path,
+                     "parent directory path is too long");
+        return -1;
+    }
+    (void)snprintf(directory, sizeof(directory), "%s", path);
+    slash = strrchr(directory, '/');
+    if (slash == NULL) {
+        (void)snprintf(directory, sizeof(directory), ".");
+    } else if (slash == directory) {
+        slash[1] = '\0';
+    } else {
+        *slash = '\0';
+    }
+    directory_descriptor = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (directory_descriptor < 0 || fsync(directory_descriptor) != 0 ||
+        close(directory_descriptor) != 0) {
+        const int saved = errno;
+        if (directory_descriptor >= 0) (void)close(directory_descriptor);
+        mc_error_set(error, MC_EXIT_RUNTIME, saved, "atomic-write", directory,
+                     "cannot sync parent directory");
         return -1;
     }
     return 0;

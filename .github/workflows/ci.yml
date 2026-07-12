@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install C dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libarchive-dev libssl-dev libsystemd-dev
+        run: sudo apt-get update && sudo apt-get install --yes libarchive-dev libssl-dev libsystemd-dev libjson-c-dev
       - name: Configure
         run: cmake --preset dev-${{ matrix.compiler }}
       - name: Build

@@ -9,6 +9,7 @@
 
 struct mc_run_config {
     char *id;
+    char *name;
     char *rootfs;
     char *hostname;
     char *workdir;
@@ -22,7 +23,7 @@ struct mc_run_config {
     uint64_t swap_max;
     uint64_t cpu_quota;
     uint64_t pids_max;
-    char *const *command;
+    char **command;
 };
 
 int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error);
