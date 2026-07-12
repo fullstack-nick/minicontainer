@@ -46,7 +46,7 @@ for _ in $(seq 1 100); do
 done
 grep -q '"ipv4_host":170655746' "$MC_STATE_DIR/containers/$id_a/state.json"
 host_a="mch${id_a:0:8}"
-ip link show "$host_a" | grep -q 'master mcbr0'
+grep -q 'master mcbr0' <<<"$(ip link show "$host_a")"
 network_a="$("$binary" exec net-a -- /bin/sh -c \
   'ip -4 addr show dev eth0; ip route; ping -c 1 -W 1 10.44.0.1')"
 grep -q '10.44.0.2/24' <<<"$network_a"
@@ -65,7 +65,7 @@ s.sendto(b'MINICONTAINER_UDP', ('127.0.0.1', 19090))
 assert s.recv(128) == b'MINICONTAINER_UDP'
 PY
 ! curl --silent --max-time 1 http://127.0.0.1:18081/ >/dev/null 2>&1
-nft -a list table inet minicontainer | grep -q "minicontainer:$id_a"
+grep -q "minicontainer:$id_a" <<<"$(nft -a list table inet minicontainer)"
 
 set +e
 "$binary" create --name net-conflict --network bridge \
@@ -96,14 +96,14 @@ crash_id="$("$binary" create --name net-crash --network bridge \
   --publish 127.0.0.1:18082:8080/tcp --image alpine-network -- /network-fixture)"
 "$binary" start net-crash >/dev/null
 crash_host="mch${crash_id:0:8}"
-nft -a list table inet minicontainer | grep -q "minicontainer:$crash_id"
+grep -q "minicontainer:$crash_id" <<<"$(nft -a list table inet minicontainer)"
 crash_shim="$(sed -n 's/.*"shim_pid":\([0-9]*\).*/\1/p' \
   "$MC_STATE_DIR/containers/$crash_id/state.json")"
 kill -KILL "$crash_shim"
 sleep 0.2
 "$binary" gc >/dev/null
 ! ip link show "$crash_host" >/dev/null 2>&1
-! nft -a list table inet minicontainer | grep -q "minicontainer:$crash_id"
+! grep -q "minicontainer:$crash_id" <<<"$(nft -a list table inet minicontainer)"
 "$binary" rm net-crash
 
 id_b="$("$binary" create --name net-b --network bridge --image alpine-network -- \
@@ -130,11 +130,11 @@ set -e
 
 "$binary" rm --force net-a
 ! ip link show "$host_a" >/dev/null 2>&1
-! nft -a list table inet minicontainer | grep -q "minicontainer:$id_a"
+! grep -q "minicontainer:$id_a" <<<"$(nft -a list table inet minicontainer)"
 ! curl --silent --max-time 1 http://127.0.0.1:18080/ >/dev/null 2>&1
 id_c="$("$binary" create --name net-c --network bridge --image alpine-network -- /bin/true)"
 grep -q '"ipv4_host":170655746' "$MC_STATE_DIR/containers/$id_c/config.json"
 
-nft list chain inet minicontainer forward | grep -q 'policy drop'
-nft list chain inet minicontainer postrouting | grep -q 'masquerade'
+grep -q 'policy drop' <<<"$(nft list chain inet minicontainer forward)"
+grep -q 'masquerade' <<<"$(nft list chain inet minicontainer postrouting)"
 printf 'PASS bridge/veth, IPAM, TCP/UDP publish, NAT, collisions, network-none, and cleanup\n'
