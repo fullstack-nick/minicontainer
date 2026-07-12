@@ -7,7 +7,8 @@ if ! git -C "$repo_root" diff --quiet || ! git -C "$repo_root" diff --cached --q
   exit 2
 fi
 commit="$(git -C "$repo_root" rev-parse HEAD)"
-export SOURCE_DATE_EPOCH="$(git -C "$repo_root" show -s --format=%ct HEAD)"
+SOURCE_DATE_EPOCH="$(git -C "$repo_root" show -s --format=%ct HEAD)"
+export SOURCE_DATE_EPOCH
 build_dir="$repo_root/build/release"
 dist_dir="$repo_root/dist"
 
