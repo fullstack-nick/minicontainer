@@ -1,0 +1,25 @@
+PASS
+
+Candidate: 715f7d3486ecd691a5ded657a26af1c831d1b31c
+
+GCC configure/build/CTest: 4/4 passed
+Clang configure/build/CTest: 4/4 passed
+Privileged rootfs runtime: PASS
+Privileged cgroups limits/stats: PASS
+Privileged lifecycle/recovery:
+  PASS lifecycle, exec, pidfd control, forced stop, rm, crash reconciliation, and restart
+
+Covered behavior:
+- create/start/run and created/running/stopped transitions;
+- full ID, unique prefix, and unique name resolution;
+- duplicate-name and concurrent-start conflicts;
+- writable overlay persistence across starts;
+- root-only SOCK_SEQPACKET control socket and SO_PEERCRED denial;
+- pidfd/start-time validation and payload cgroup.kill;
+- exec matching user, PID, mount, UTS, IPC, network, and cgroup namespaces;
+- logs tail/follow; graceful exit 33; forced exit 137;
+- rm and rm --force; shim-kill gc; restart after reconciliation;
+- foreground CLI kill followed by control, stop, and removal.
+
+Release build and CPack tests: 4/4 passed
+Package SHA-256: 002073cb4134535b3c795d097f71e3b860987546a9c563bfd2ecc154f3f1c6a2

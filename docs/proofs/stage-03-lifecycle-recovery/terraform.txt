@@ -1,0 +1,7 @@
+PASS
+
+GCP guard verified the expected operator and locked project before deployment.
+Terraform provider hashicorp/google 7.39.0 was loaded from the lock file.
+Live refresh plan: No changes. Infrastructure matches configuration.
+
+Sensitive billing identifiers are intentionally redacted.

@@ -1,0 +1,11 @@
+PASS
+
+Post-suite host inspection found:
+- zero minicontainer-*.scope units;
+- zero MiniContainer shim/runtime processes;
+- zero minicontainer-* cgroup paths;
+- zero MiniContainer runtime socket entries;
+- zero MiniContainer runtime mounts.
+
+The e2-micro remained healthy with swap disabled, available memory, and an idle load average.
+No capacity signal justified resizing the VM.

@@ -1,0 +1,15 @@
+PASS
+
+Installed-binary lifecycle suite on GCP:
+  PASS lifecycle, exec, pidfd control, forced stop, rm, crash reconciliation, and restart
+
+Live assertions included:
+- durable config/state and overlay data across two starts;
+- ps/inspect/log lookup by name and ID prefix;
+- control socket mode 0600 and non-root request rejection without signal delivery;
+- exec PID and all seven namespace identities matching the running init;
+- graceful TERM exit 33 and timeout/cgroup.kill exit 137;
+- conflicting duplicate names and concurrent starts rejected;
+- forced removal of a running workload;
+- SIGKILL of the shim followed by gc stale-running repair and successful restart;
+- SIGKILL of a foreground CLI while the shim remained truthfully running and controllable.

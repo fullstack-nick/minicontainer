@@ -568,6 +568,7 @@ The demo sequence is fixed: import pinned Alpine rootfs; run an isolated shell c
 - 2026-07-12: Operator explicitly authorized automatic in-place escalation from `e2-micro` through the smallest sufficient size up to `n2-standard-16` whenever the free-tier VM constrains development, plus deliberate N2 stress testing. Final cleanup remains non-negotiable: exactly one running `e2-micro`, with all other development/load resources deleted.
 - 2026-07-12: Live billing-account discovery showed the account currency is TRY, so the API cannot accept a USD-denominated budget. Locked the budget at TRY 470, approximately USD 10 at the observed 46.98 USD/TRY rate; threshold percentages remain unchanged.
 - 2026-07-12: Stage 2 passed locally and live with systemd-delegated cgroups v2, exact limit readback, JSON statistics, CPU throttling, memory OOM accounting, PID exhaustion, signal cleanup, and a zero-orphan GCP inspection. The e2-micro remained healthy, so no temporary resize was needed.
+- 2026-07-12: Stage 3 passed locally and live with durable lifecycle state, name/prefix resolution, namespace-preserving exec, root-only shim control, pidfd identity checks, graceful and forced stop, persistent overlays, concurrent conflict handling, shim/CLI crash recovery, gc/restart, and zero-orphan GCP inspection. The e2-micro remained healthy.
 
 ## 12. Stage status
 
@@ -576,7 +577,7 @@ The demo sequence is fixed: import pinned Alpine rootfs; run an isolated shell c
 | 0. Blueprint/foundation | bootstrap | Complete | GCC+Clang+Terraform PASS | CI+CodeQL PASS | Private e2-micro exact artifact PASS | `docs/proofs/stage-00-foundation/` |
 | 1. Isolation/rootfs | v0.1 | Complete | GCC+Clang+privileged runtime PASS | CI+CodeQL PASS | Exact artifact on private e2-micro PASS | `docs/proofs/stage-01-isolation-rootfs/` |
 | 2. Resources/stats | v0.2 | Complete | GCC+Clang+cgroup integration PASS | CI+CodeQL PASS | Exact artifact on private e2-micro PASS | `docs/proofs/stage-02-resources-stats/` |
-| 3. Lifecycle/recovery | v0.3 | In progress | Persistence + lifecycle integration PASS | Pending | Pending | Pending |
+| 3. Lifecycle/recovery | v0.3 | Complete | GCC+Clang+lifecycle/recovery PASS | CI+CodeQL PASS | Exact artifact on private e2-micro PASS | `docs/proofs/stage-03-lifecycle-recovery/` |
 | 4. Networking | v0.4 | Not started | — | — | — | — |
 | 5. Security | v0.5 | Not started | — | — | — | — |
 | 6. Reliability/operations | v0.6 | Not started | — | — | — | — |
