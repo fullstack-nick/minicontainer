@@ -558,7 +558,13 @@ int mc_state_reconcile(int verbose, struct mc_error *error) {
                 strstr(cgroup, entry->d_name) != NULL &&
                 snprintf(kill_path, sizeof(kill_path), "%s/cgroup.kill", cgroup) > 0)
                 descriptor = open(kill_path, O_WRONLY | O_CLOEXEC);
-            if (descriptor >= 0) { (void)write(descriptor, "1", 1U); (void)close(descriptor); }
+            if (descriptor >= 0) {
+                const ssize_t kill_result = write(descriptor, "1", 1U);
+                (void)close(descriptor);
+                if (kill_result != 1 && verbose != 0)
+                    (void)fprintf(stderr, "warning: stale cgroup kill failed for %.12s\n",
+                                  entry->d_name);
+            }
         }
         json_object_object_add(root, "status", json_object_new_string("stopped"));
         json_object_object_add(root, "shim_pid", json_object_new_int(0));

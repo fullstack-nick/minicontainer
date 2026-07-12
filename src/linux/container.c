@@ -769,7 +769,9 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
         (void)close(barrier[1]);
         (void)close(ready[0]);
         cleanup_ephemeral(&paths);
-        (void)chown(paths.base, 0, 0);
+        if (chown(paths.base, 0, 0) != 0 && error->code == 0)
+            mc_error_set(error, MC_EXIT_RUNTIME, errno, "cleanup", paths.base,
+                         "cannot restore state directory ownership");
         mc_cgroup_destroy(&cgroup);
         mc_error_set(error, MC_EXIT_RUNTIME, saved, "clone3", config->id,
                      "cannot create container namespaces");
@@ -789,7 +791,9 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
             (void)close(pidfd);
         }
         cleanup_ephemeral(&paths);
-        (void)chown(paths.base, 0, 0);
+        if (chown(paths.base, 0, 0) != 0 && error->code == 0)
+            mc_error_set(error, MC_EXIT_RUNTIME, errno, "cleanup", paths.base,
+                         "cannot restore state directory ownership");
         mc_cgroup_destroy(&cgroup);
         mc_error_set(error, MC_EXIT_RUNTIME, saved, "uid-gid-map", config->id,
                      "cannot configure subordinate identity mapping");
