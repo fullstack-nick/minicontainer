@@ -8,6 +8,8 @@ ConditionPathExists=/var/lib/minicontainer
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/minicontainer gc
+ExecStart=/usr/bin/sleep 2
+ExecStart=/usr/bin/minicontainer gc
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict

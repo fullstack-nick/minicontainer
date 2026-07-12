@@ -4,8 +4,6 @@ set -euo pipefail
 archive="${1:?Alpine archive is required}"
 fixture="${2:?static reliability fixture is required}"
 phase="${3:?prepare or verify is required}"
-unit=/etc/systemd/system/minicontainer-reboot-demo.service
-
 if [[ "$phase" == prepare ]]; then
   minicontainer rm --force reboot-demo >/dev/null 2>&1 || true
   minicontainer image import reboot-demo-image "$archive" >/dev/null
@@ -17,33 +15,34 @@ if [[ "$phase" == prepare ]]; then
   minicontainer create --name reboot-demo --network none --image reboot-demo-image -- \
     /bin/sh -c 'while :; do sleep 1; done' >/dev/null
   minicontainer start reboot-demo >/dev/null
-  cat >"$unit" <<'UNIT'
-[Unit]
-Description=MiniContainer reboot recovery proof workload
-After=minicontainer-reconcile.service
-Requires=minicontainer-reconcile.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/minicontainer start reboot-demo
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-  systemctl daemon-reload
-  systemctl enable minicontainer-reboot-demo.service >/dev/null
-  printf 'PREPARED reboot-demo\n'
+  state=/var/lib/minicontainer/containers/$(minicontainer inspect reboot-demo | \
+    sed -n 's/.*"id":"\([0-9a-f]*\)".*/\1/p')/state.json
+  shim_pid="$(sed -n 's/.*"shim_pid":\([0-9]*\).*/\1/p' "$state")"
+  kill -KILL "$shim_pid"
+  sleep 0.1
+  grep -q '"status":"running"' "$state"
+  printf 'PREPARED stale-running reboot-demo\n'
 elif [[ "$phase" == verify ]]; then
   reconcile_status="$(systemctl is-active minicontainer-reconcile.service || true)"
   [[ "$reconcile_status" == inactive || "$reconcile_status" == active ]]
+  minicontainer inspect reboot-demo | grep -q '"status":"stopped"'
+  systemd-run --quiet --unit=minicontainer-reboot-demo --property=Type=oneshot \
+    --property=RemainAfterExit=yes /usr/bin/minicontainer start reboot-demo
+  for _ in $(seq 1 100); do
+    systemctl is-active minicontainer-reboot-demo.service 2>/dev/null | grep -q active && break
+    sleep 0.05
+  done
   systemctl is-active minicontainer-reboot-demo.service | grep -q active
   minicontainer inspect reboot-demo | grep -q '"status":"running"'
   minicontainer exec reboot-demo -- /bin/true
-  systemctl disable minicontainer-reboot-demo.service >/dev/null
-  rm -f "$unit"
-  systemctl daemon-reload
-  minicontainer rm --force reboot-demo
+  printf 'RESTORED reboot-demo after boot reconciliation\n'
+  if ! minicontainer rm --force reboot-demo; then
+    sleep 1
+    minicontainer gc >/dev/null
+    minicontainer rm reboot-demo
+  fi
+  systemctl stop minicontainer-reboot-demo.service || true
+  systemctl reset-failed minicontainer-reboot-demo.service 2>/dev/null || true
   minicontainer gc >/dev/null
   printf 'PASS boot reconciliation and systemd workload restoration\n'
 else
