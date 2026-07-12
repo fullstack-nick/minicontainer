@@ -21,3 +21,19 @@ jobs:
         run: cmake --build --preset dev-${{ matrix.compiler }}
       - name: Test
         run: ctest --preset dev-${{ matrix.compiler }}
+
+  infrastructure:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+      - name: Format
+        run: terraform fmt -check -recursive infra
+      - name: Initialize without backend
+        run: terraform -chdir=infra/terraform init -backend=false
+      - name: Validate
+        run: terraform -chdir=infra/terraform validate
+      - name: Policy tests
+        run: terraform -chdir=infra/terraform test
