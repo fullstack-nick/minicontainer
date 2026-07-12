@@ -416,7 +416,27 @@ static int write_generated_file(const char *path, const char *content) {
     return close(descriptor);
 }
 
-static int generate_identity_files(const char *hostname) {
+static int load_resolver_config(char *content, size_t capacity) {
+    static const char *paths[] = {"/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"};
+    size_t index;
+    for (index = 0U; index < sizeof(paths) / sizeof(paths[0]); ++index) {
+        int descriptor = open(paths[index], O_RDONLY | O_CLOEXEC);
+        ssize_t length;
+        if (descriptor < 0) continue;
+        length = read(descriptor, content, capacity - 1U);
+        (void)close(descriptor);
+        if (length <= 0) continue;
+        content[(size_t)length] = '\0';
+        if (strstr(content, "nameserver 127.") == NULL &&
+            strstr(content, "nameserver ::1") == NULL) return 0;
+    }
+    return snprintf(content, capacity,
+                    "nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions timeout:1 attempts:2\n") > 0
+               ? 0
+               : -1;
+}
+
+static int generate_identity_files(const char *hostname, const char *resolver_config) {
     char hostname_file[256];
     char hosts_file[512];
     int length;
@@ -435,7 +455,7 @@ static int generate_identity_files(const char *hostname) {
     }
     return write_generated_file("/etc/hostname", hostname_file) == 0 &&
                    write_generated_file("/etc/hosts", hosts_file) == 0 &&
-                   write_generated_file("/etc/resolv.conf", "nameserver 8.8.8.8\noptions timeout:1 attempts:1\n") == 0
+                   write_generated_file("/etc/resolv.conf", resolver_config) == 0
                ? 0
                : -1;
 }
@@ -542,6 +562,7 @@ static int supervise(const struct mc_run_config *config) {
 
 static int child_main(const struct child_context *context) {
     char ready;
+    char resolver_config[4096];
     if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0) {
         (void)fprintf(stderr, "minicontainer-shim: parent-death-signal: %s\n", strerror(errno));
         return 125;
@@ -599,10 +620,14 @@ static int child_main(const struct child_context *context) {
         (void)fprintf(stderr, "minicontainer-shim: loopback: %s\n", strerror(errno));
         return 125;
     }
+    if (load_resolver_config(resolver_config, sizeof(resolver_config)) != 0) {
+        (void)fprintf(stderr, "minicontainer-shim: resolver config: %s\n", strerror(errno));
+        return 125;
+    }
     if (setup_root(context) != 0) {
         return 125;
     }
-    if (generate_identity_files(context->config->hostname) != 0) {
+    if (generate_identity_files(context->config->hostname, resolver_config) != 0) {
         (void)fprintf(stderr, "minicontainer-shim: identity files: %s\n", strerror(errno));
         return 125;
     }
