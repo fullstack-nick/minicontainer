@@ -590,7 +590,10 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
             (void)kill(child, SIGKILL);
         }
         if (config->ready_fd >= 0) {
-            (void)write(config->ready_fd, "1", 1U);
+            if (write(config->ready_fd, "1", 1U) != 1) {
+                (void)kill(child, SIGKILL);
+                ready_count = 0;
+            }
             (void)close(config->ready_fd);
         }
     } else if (config->ready_fd >= 0) {
@@ -628,7 +631,10 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     }
     if (config->detach != 0) {
         cleanup_ephemeral(&paths);
-        (void)chown(paths.base, 0, 0);
+        if (chown(paths.base, 0, 0) != 0) {
+            mc_error_set(error, MC_EXIT_RUNTIME, errno, "cleanup", paths.base,
+                         "cannot restore state directory ownership");
+        }
         (void)chmod(paths.base, 0750);
         (void)write_state(&paths, config, ready_count == 1 ? "stopped" : "failed", child,
                           exit_code, error);

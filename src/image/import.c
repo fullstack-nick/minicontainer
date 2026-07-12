@@ -175,7 +175,11 @@ static int extract_archive(const char *source, const char *destination,
 
 cleanup:
     if (cwd >= 0) {
-        (void)fchdir(cwd);
+        if (fchdir(cwd) != 0 && status == 0) {
+            mc_error_set(error, MC_EXIT_RUNTIME, errno, "image-import", destination,
+                         "cannot restore working directory");
+            status = -1;
+        }
         (void)close(cwd);
     }
     if (writer != NULL) {
