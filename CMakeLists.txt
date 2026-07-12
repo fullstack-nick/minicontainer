@@ -80,12 +80,17 @@ if(BUILD_TESTING)
             $<TARGET_FILE:minicontainer>)
 endif()
 
-install(TARGETS minicontainer RUNTIME DESTINATION bin)
-install(TARGETS minicontainer-shim RUNTIME DESTINATION libexec/minicontainer)
-install(FILES config/minicontainer.json DESTINATION etc/minicontainer RENAME config.json)
-install(FILES packaging/minicontainer-reconcile.service DESTINATION lib/systemd/system)
+install(TARGETS minicontainer RUNTIME DESTINATION bin
+  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+install(TARGETS minicontainer-shim RUNTIME DESTINATION libexec/minicontainer
+  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+install(FILES config/minicontainer.json DESTINATION /etc/minicontainer RENAME config.json
+  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
+install(FILES packaging/minicontainer-reconcile.service DESTINATION lib/systemd/system
+  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 
 set(CPACK_GENERATOR DEB)
+set(CPACK_SET_DESTDIR ON)
 set(CPACK_PACKAGE_NAME minicontainer)
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 set(CPACK_PACKAGE_CONTACT "MiniContainer maintainers")
