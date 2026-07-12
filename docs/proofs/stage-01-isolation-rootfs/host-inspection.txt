@@ -1,0 +1,10 @@
+Host OS: Ubuntu 24.04 LTS
+Kernel: GCP 6.17 series
+PID 1: systemd
+Cgroup filesystem: cgroup2fs
+Installed commit: 8ee8ccb3262cee7b0e5b38998ebc91e4e9a6075e
+Machine type: e2-micro
+External IPv4: none
+
+All seven host namespace inodes differed from the container values. Journal errors in the proof window were limited to unrelated OS Login SSH/PAM session noise; the runtime emitted no setup, mount, namespace, or cleanup errors.
+

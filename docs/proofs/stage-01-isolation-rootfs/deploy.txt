@@ -1,0 +1,12 @@
+Package: minicontainer_0.0.1_amd64.deb
+Embedded commit: 8ee8ccb3262cee7b0e5b38998ebc91e4e9a6075e
+Local SHA-256: e2a013feeae566414bf4feca7e969fccafa03b9f3129a80bffcab1946e9ba8ab
+Remote SHA-256: e2a013feeae566414bf4feca7e969fccafa03b9f3129a80bffcab1946e9ba8ab
+Transport: IAP-only SCP
+Installed package version: 0.0.1
+
+Pinned Alpine archive local and remote SHA-256:
+41f73e3cf5fa919b8aa5ca6b30dc48f0da2720776d7423e2a7748211456fe081
+
+The VM dedicated identity owns subordinate UID and GID ranges beginning at 200000 with length 65536.
+

@@ -1,0 +1,8 @@
+Commit: 8ee8ccb3262cee7b0e5b38998ebc91e4e9a6075e
+CI: PASS
+https://github.com/fullstack-nick/minicontainer/actions/runs/29193201086
+CodeQL security-extended: PASS
+https://github.com/fullstack-nick/minicontainer/actions/runs/29193201092
+
+The GCC job ran the privileged namespace/rootfs smoke in addition to the normal test suite. The hosted runner's intentionally masked proc mount used the explicit test-only inherited-proc path; canonical WSL2 and GCP runs mounted a new private proc filesystem and verified its namespace view and flags.
+

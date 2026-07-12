@@ -1,0 +1,12 @@
+Detached ID: 80db5436cf6466cdd431c030952047f5
+Readiness rule: CLI returned the ID only after namespace/rootfs setup and atomic running-state publication.
+
+Final state:
+{"schema_version":1,"id":"80db5436cf6466cdd431c030952047f5","status":"stopped","shim_pid":2722,"init_pid":2723,"exit_code":7}
+
+Persisted log:
+FINAL_DETACHED_START
+FINAL_DETACHED_DONE
+
+After exit, the state remained inspectable while upper, work, and merged runtime directories were absent.
+

@@ -1,0 +1,21 @@
+Foreground contract output:
+HOST=stage1-final ETC_HOSTNAME=stage1-final
+PID=2 PPID=1 UID=1234 GID=2345 DEMO=final WORKDIR=/tmp
+UID_MAP=0 200000 65536
+NET_DEVICES=lo
+
+Generated `/etc/hostname`, `/etc/hosts`, and `/etc/resolv.conf` matched the container identity contract. The host-only environment probe was absent and a non-root write in `/tmp` succeeded.
+
+Container namespace inodes:
+user=4026532268 pid=4026532272 mnt=4026532269 uts=4026532270
+ipc=4026532271 net=4026532274 cgroup=4026532273
+
+Host namespace inodes:
+user=4026531837 pid=4026531836 mnt=4026531832 uts=4026531838
+ipc=4026531839 net=4026531833 cgroup=4026531835
+
+Proc mount: rw,nosuid,nodev,noexec
+Root mount: overlay, nodev, immutable Alpine lower plus private upper/work, userxattr
+Normal command exit proof: 42
+SIGTERM trap exit proof: 33
+

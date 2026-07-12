@@ -1,0 +1,11 @@
+Residual MiniContainer mounts: 0
+Running minicontainer-shim processes: 0
+Residual host interfaces with MiniContainer ownership: 0
+Foreground container directories: removed
+Detached overlay upper/work/merged directories after exit: removed
+Detached stopped state and logs: intentionally retained
+Terraform drift: none
+Compute inventory: exactly one running e2-micro, no external IPv4
+
+Stage 1 cleanup verdict: PASS
+

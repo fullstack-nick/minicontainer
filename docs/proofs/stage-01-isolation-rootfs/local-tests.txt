@@ -1,0 +1,9 @@
+PASS GCC strict build and CTest
+PASS Clang strict build and CTest
+PASS secure archive integration: traversal, unsafe links, special metadata, atomic publication, idempotence
+PASS pinned Alpine 3.24.1 import
+PASS privileged WSL2 runtime integration
+PASS hostname, PID, UID/GID, environment, workdir, proc, overlay, exit, signal, detach, logs, state, and cleanup assertions
+PASS release build with warnings as errors
+PASS ShellCheck, actionlint, gitleaks
+
