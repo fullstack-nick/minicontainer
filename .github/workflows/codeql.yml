@@ -16,7 +16,7 @@ jobs:
   analyze:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install C dependencies
         run: sudo apt-get update && sudo apt-get install --yes libarchive-dev libssl-dev libsystemd-dev libjson-c-dev libseccomp-dev
       - uses: github/codeql-action/init@v4
