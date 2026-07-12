@@ -1,5 +1,6 @@
 #include "minicontainer/runtime.h"
 
+#include "minicontainer/cgroup.h"
 #include "minicontainer/fs.h"
 #include "minicontainer/subid.h"
 
@@ -526,14 +527,22 @@ static void cleanup_ephemeral(const struct runtime_paths *paths) {
 }
 
 static int write_state(const struct runtime_paths *paths, const struct mc_run_config *config,
-                       const char *state, pid_t init_pid, int exit_code,
+                       const struct mc_cgroup *cgroup, const char *state, pid_t init_pid, int exit_code,
                        struct mc_error *error) {
     char document[1024];
     const int length = snprintf(document, sizeof(document),
                                 "{\"schema_version\":1,\"id\":\"%s\","
                                 "\"status\":\"%s\",\"shim_pid\":%ld,"
-                                "\"init_pid\":%ld,\"exit_code\":%d}\n",
-                                config->id, state, (long)getpid(), (long)init_pid, exit_code);
+                                "\"init_pid\":%ld,\"exit_code\":%d,"
+                                "\"resources\":{\"memory_max\":%llu,\"swap_max\":%llu,"
+                                "\"cpu_quota\":%llu,\"cpu_period\":100000,\"pids_max\":%llu},"
+                                "\"cgroup_path\":\"%s\"}\n",
+                                config->id, state, (long)getpid(), (long)init_pid, exit_code,
+                                (unsigned long long)config->memory_max,
+                                (unsigned long long)config->swap_max,
+                                (unsigned long long)config->cpu_quota,
+                                (unsigned long long)config->pids_max,
+                                cgroup->payload[0] != '\0' ? cgroup->payload : "");
     if (length < 0 || (size_t)length >= sizeof(document)) {
         mc_error_set(error, MC_EXIT_INTERNAL, EOVERFLOW, "write-state", config->id,
                      "state document is too large");
@@ -546,6 +555,7 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     uint32_t subordinate_uid;
     uint32_t subordinate_gid;
     struct runtime_paths paths;
+    struct mc_cgroup cgroup;
     int barrier[2];
     int ready[2];
     struct child_context child_context;
@@ -573,17 +583,25 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
         mc_subid_range(&subordinate_uid, &subordinate_gid, error) != 0) {
         return -1;
     }
+    if (mc_cgroup_create(config, &cgroup, error) != 0) {
+        return -1;
+    }
     if (prepare_paths(config->id, subordinate_uid, subordinate_gid, &paths, error) != 0 ||
         pipe2(barrier, O_CLOEXEC) != 0 || pipe2(ready, O_CLOEXEC) != 0) {
         if (error->code == 0) {
             mc_error_set(error, MC_EXIT_RUNTIME, errno, "run", config->id,
                          "cannot create synchronization barrier");
         }
+        mc_cgroup_destroy(&cgroup);
         return -1;
     }
     (void)memset(&clone_arguments, 0, sizeof(clone_arguments));
     clone_arguments.flags = CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWUTS |
                             CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWCGROUP | CLONE_PIDFD;
+    if (cgroup.active != 0) {
+        clone_arguments.flags |= CLONE_INTO_CGROUP;
+        clone_arguments.cgroup = (__u64)(unsigned int)cgroup.payload_fd;
+    }
     clone_arguments.pidfd = (uint64_t)(uintptr_t)&pidfd;
     clone_arguments.exit_signal = SIGCHLD;
     child_context.config = config;
@@ -605,6 +623,7 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
         (void)close(barrier[1]);
         (void)close(ready[0]);
         cleanup_paths(&paths);
+        mc_cgroup_destroy(&cgroup);
         mc_error_set(error, MC_EXIT_RUNTIME, saved, "clone3", config->id,
                      "cannot create container namespaces");
         return -1;
@@ -623,6 +642,7 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
             (void)close(pidfd);
         }
         cleanup_paths(&paths);
+        mc_cgroup_destroy(&cgroup);
         mc_error_set(error, MC_EXIT_RUNTIME, saved, "uid-gid-map", config->id,
                      "cannot configure subordinate identity mapping");
         return -1;
@@ -634,7 +654,7 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     (void)close(ready[0]);
     if (ready_count == 1 && ready_byte == '1') {
         if (config->detach != 0 &&
-            write_state(&paths, config, "running", child, 0, error) != 0) {
+            write_state(&paths, config, &cgroup, "running", child, 0, error) != 0) {
             (void)kill(child, SIGKILL);
         }
         if (config->ready_fd >= 0) {
@@ -670,6 +690,7 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     if (pidfd >= 0) {
         (void)close(pidfd);
     }
+    mc_cgroup_destroy(&cgroup);
     if (status >= 0 && WIFEXITED(status)) {
         exit_code = WEXITSTATUS(status);
     } else if (status >= 0 && WIFSIGNALED(status)) {
@@ -684,8 +705,8 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
                          "cannot restore state directory ownership");
         }
         (void)chmod(paths.base, 0750);
-        (void)write_state(&paths, config, ready_count == 1 ? "stopped" : "failed", child,
-                          exit_code, error);
+        (void)write_state(&paths, config, &cgroup, ready_count == 1 ? "stopped" : "failed",
+                          child, exit_code, error);
     } else {
         cleanup_paths(&paths);
     }

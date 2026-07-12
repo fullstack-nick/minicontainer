@@ -4,6 +4,7 @@
 #include "minicontainer/error.h"
 
 #include <stddef.h>
+#include <stdint.h>
 #include <sys/types.h>
 
 struct mc_run_config {
@@ -17,6 +18,10 @@ struct mc_run_config {
     size_t environment_count;
     int detach;
     int ready_fd;
+    uint64_t memory_max;
+    uint64_t swap_max;
+    uint64_t cpu_quota;
+    uint64_t pids_max;
     char *const *command;
 };
 

@@ -574,7 +574,7 @@ The demo sequence is fixed: import pinned Alpine rootfs; run an isolated shell c
 |---|---:|---|---|---|---|---|
 | 0. Blueprint/foundation | bootstrap | Complete | GCC+Clang+Terraform PASS | CI+CodeQL PASS | Private e2-micro exact artifact PASS | `docs/proofs/stage-00-foundation/` |
 | 1. Isolation/rootfs | v0.1 | Complete | GCC+Clang+privileged runtime PASS | CI+CodeQL PASS | Exact artifact on private e2-micro PASS | `docs/proofs/stage-01-isolation-rootfs/` |
-| 2. Resources/stats | v0.2 | Not started | — | — | — | — |
+| 2. Resources/stats | v0.2 | In progress | GCC+Clang+cgroup integration PASS | Pending | Pending | Pending |
 | 3. Lifecycle/recovery | v0.3 | Not started | — | — | — | — |
 | 4. Networking | v0.4 | Not started | — | — | — | — |
 | 5. Security | v0.5 | Not started | — | — | — | — |

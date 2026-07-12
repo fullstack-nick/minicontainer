@@ -10,19 +10,24 @@ set(CMAKE_C_EXTENSIONS ON)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBARCHIVE REQUIRED IMPORTED_TARGET libarchive)
 pkg_check_modules(OPENSSL REQUIRED IMPORTED_TARGET openssl)
+pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 
 add_library(minicontainer_core STATIC
   src/image/import.c
+  src/linux/cgroup.c
   src/linux/container.c
+  src/linux/stats.c
   src/runtime/launch.c
   src/runtime/info.c
   src/util/error.c
   src/util/fs.c
   src/util/id.c
+  src/util/resource.c
   src/util/subid.c
   src/util/validate.c)
 target_include_directories(minicontainer_core PUBLIC include)
-target_link_libraries(minicontainer_core PUBLIC PkgConfig::LIBARCHIVE PkgConfig::OPENSSL)
+target_link_libraries(minicontainer_core PUBLIC PkgConfig::LIBARCHIVE PkgConfig::OPENSSL
+  PkgConfig::SYSTEMD)
 target_compile_definitions(minicontainer_core PRIVATE _GNU_SOURCE _XOPEN_SOURCE=700)
 
 add_executable(minicontainer src/cli/main.c)

@@ -1,4 +1,5 @@
 #include "minicontainer/validate.h"
+#include "minicontainer/resource.h"
 
 #include <stdio.h>
 
@@ -35,6 +36,18 @@ int main(void) {
                    group == 1001U,
                "numeric user and group parsed");
         expect(mc_parse_user("70000", &user, &group) == 0, "out-of-range user rejected");
+    }
+    {
+        uint64_t value = 0U;
+        expect(mc_parse_bytes("128MiB", &value) != 0 && value == UINT64_C(134217728),
+               "IEC memory parsed");
+        expect(mc_parse_bytes("18446744073709551615GiB", &value) == 0,
+               "memory overflow rejected");
+        expect(mc_parse_cpu_quota("0.5", &value) != 0 && value == UINT64_C(50000),
+               "fractional CPU parsed without floating point");
+        expect(mc_parse_cpu_quota("0", &value) == 0, "zero CPU rejected");
+        expect(mc_parse_positive_u64("128", UINT64_C(4194304), &value) != 0 && value == 128U,
+               "PID limit parsed");
     }
     if (failures == 0) {
         (void)puts("PASS core validation tests");

@@ -4,6 +4,8 @@
 #include "minicontainer/image.h"
 #include "minicontainer/id.h"
 #include "minicontainer/runtime.h"
+#include "minicontainer/resource.h"
+#include "minicontainer/stats.h"
 #include "minicontainer/validate.h"
 
 #include <stdio.h>
@@ -12,6 +14,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
+#include <unistd.h>
 
 #ifndef MC_VERSION
 #define MC_VERSION "unknown"
@@ -27,9 +30,12 @@ static void usage(FILE *stream) {
                   "  minicontainer info [--json]\n"
                   "  minicontainer image import NAME ROOTFS_TAR [--json]\n"
                   "  minicontainer run [--detach] --image NAME [--hostname NAME] [--env KEY=VALUE] "
-                  "[--workdir PATH] [--user UID[:GID]] -- COMMAND [ARG...]\n"
+                  "[--workdir PATH] [--user UID[:GID]] [--memory BYTES] "
+                  "[--memory-swap BYTES] [--cpus DECIMAL] [--pids-limit COUNT] "
+                  "-- COMMAND [ARG...]\n"
                   "  minicontainer inspect ID\n"
-                  "  minicontainer logs ID\n");
+                  "  minicontainer logs ID\n"
+                  "  minicontainer stats [--no-stream] [--json] ID...\n");
 }
 
 static int valid_full_id(const char *id) {
@@ -96,6 +102,28 @@ int main(int argc, char **argv) {
     if (strcmp(argv[1], "info") == 0) {
         return mc_print_info(json);
     }
+    if (strcmp(argv[1], "stats") == 0 && argc >= 3) {
+        int no_stream = 0;
+        int first_id = 2;
+        int index;
+        while (first_id < argc && strncmp(argv[first_id], "--", 2U) == 0) {
+            if (strcmp(argv[first_id], "--no-stream") == 0) no_stream = 1;
+            else if (strcmp(argv[first_id], "--json") == 0) json = 1;
+            else { usage(stderr); return MC_EXIT_USAGE; }
+            ++first_id;
+        }
+        if (first_id >= argc) { usage(stderr); return MC_EXIT_USAGE; }
+        do {
+            for (index = first_id; index < argc; ++index) {
+                if (!valid_full_id(argv[index]) || mc_stats_print(argv[index], json, &error) != 0) {
+                    if (error.code != 0) { mc_error_print(&error, json); return error.code; }
+                    usage(stderr); return MC_EXIT_USAGE;
+                }
+            }
+            if (no_stream == 0) (void)sleep(1U);
+        } while (no_stream == 0);
+        return MC_EXIT_OK;
+    }
     if ((strcmp(argv[1], "logs") == 0 || strcmp(argv[1], "inspect") == 0) && argc == 3) {
         char path[PATH_MAX];
         const char *kind = argv[1];
@@ -152,6 +180,10 @@ int main(int argc, char **argv) {
         unsigned int user = 0U;
         unsigned int group = 0U;
         int detach = 0;
+        uint64_t memory_max = UINT64_C(128) * UINT64_C(1024) * UINT64_C(1024);
+        uint64_t swap_max = 0U;
+        uint64_t cpu_quota = UINT64_C(50000);
+        uint64_t pids_max = UINT64_C(128);
         int command_index = -1;
         int index;
         struct mc_run_config config;
@@ -192,6 +224,36 @@ int main(int argc, char **argv) {
                     return MC_EXIT_USAGE;
                 }
                 environment[environment_count++] = assignment;
+            } else if ((strcmp(argv[index], "--memory") == 0 ||
+                        strcmp(argv[index], "--mem") == 0) && index + 1 < argc) {
+                if (!mc_parse_bytes(argv[++index], &memory_max)) {
+                    free(environment);
+                    usage(stderr);
+                    return MC_EXIT_USAGE;
+                }
+            } else if ((strcmp(argv[index], "--memory-swap") == 0 ||
+                        strcmp(argv[index], "--swap") == 0) && index + 1 < argc) {
+                char *swap = argv[++index];
+                if (strcmp(swap, "0") == 0) {
+                    swap_max = 0U;
+                } else if (!mc_parse_bytes(swap, &swap_max)) {
+                    free(environment);
+                    usage(stderr);
+                    return MC_EXIT_USAGE;
+                }
+            } else if ((strcmp(argv[index], "--cpus") == 0 ||
+                        strcmp(argv[index], "--cpu") == 0) && index + 1 < argc) {
+                if (!mc_parse_cpu_quota(argv[++index], &cpu_quota)) {
+                    free(environment);
+                    usage(stderr);
+                    return MC_EXIT_USAGE;
+                }
+            } else if (strcmp(argv[index], "--pids-limit") == 0 && index + 1 < argc) {
+                if (!mc_parse_positive_u64(argv[++index], UINT64_C(4194304), &pids_max)) {
+                    free(environment);
+                    usage(stderr);
+                    return MC_EXIT_USAGE;
+                }
             } else {
                 free(environment);
                 usage(stderr);
@@ -224,6 +286,10 @@ int main(int argc, char **argv) {
         config.environment_count = environment_count;
         config.detach = detach;
         config.ready_fd = -1;
+        config.memory_max = memory_max;
+        config.swap_max = swap_max;
+        config.cpu_quota = cpu_quota;
+        config.pids_max = pids_max;
         config.command = &argv[command_index];
         result = mc_launch_shim(&config, &error);
         free(environment);

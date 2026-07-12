@@ -94,8 +94,16 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
     static char environment_flag[] = "--env";
     static char detach_flag[] = "--detach";
     static char ready_flag[] = "--ready-fd";
+    static char memory_flag[] = "--memory";
+    static char swap_flag[] = "--memory-swap";
+    static char cpu_flag[] = "--cpu-quota";
+    static char pids_flag[] = "--pids-limit";
     char user_value[32];
     char ready_value[32];
+    char memory_value[32];
+    char swap_value[32];
+    char cpu_value[32];
+    char pids_value[32];
     char log_directory[PATH_MAX];
     char log_path[PATH_MAX];
     char path[PATH_MAX];
@@ -114,7 +122,7 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
     while (config->command[command_count] != NULL) {
         ++command_count;
     }
-    arguments = calloc(command_count + 17U + (config->environment_count * 2U),
+    arguments = calloc(command_count + 25U + (config->environment_count * 2U),
                        sizeof(*arguments));
     if (arguments == NULL || shim_path(path, error) != 0) {
         free(arguments);
@@ -142,6 +150,22 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
         arguments[12U + (index * 2U)] = config->environment[index];
     }
     position = 11U + (config->environment_count * 2U);
+    (void)snprintf(memory_value, sizeof(memory_value), "%llu",
+                   (unsigned long long)config->memory_max);
+    (void)snprintf(swap_value, sizeof(swap_value), "%llu",
+                   (unsigned long long)config->swap_max);
+    (void)snprintf(cpu_value, sizeof(cpu_value), "%llu",
+                   (unsigned long long)config->cpu_quota);
+    (void)snprintf(pids_value, sizeof(pids_value), "%llu",
+                   (unsigned long long)config->pids_max);
+    arguments[position++] = memory_flag;
+    arguments[position++] = memory_value;
+    arguments[position++] = swap_flag;
+    arguments[position++] = swap_value;
+    arguments[position++] = cpu_flag;
+    arguments[position++] = cpu_value;
+    arguments[position++] = pids_flag;
+    arguments[position++] = pids_value;
     if (config->detach != 0) {
         if (pipe2(readiness, O_CLOEXEC) != 0 ||
             fcntl(readiness[1], F_SETFD, 0) != 0 ||

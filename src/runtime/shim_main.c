@@ -1,6 +1,7 @@
 #include "minicontainer/error.h"
 #include "minicontainer/runtime.h"
 #include "minicontainer/validate.h"
+#include "minicontainer/resource.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,6 +70,29 @@ int main(int argc, char **argv) {
                 break;
             }
             config.ready_fd = (int)descriptor;
+        } else if (strcmp(argv[index], "--memory") == 0) {
+            if (!mc_parse_positive_u64(argv[++index], UINT64_MAX, &config.memory_max)) {
+                break;
+            }
+        } else if (strcmp(argv[index], "--memory-swap") == 0) {
+            char *end = NULL;
+            unsigned long long parsed;
+            errno = 0;
+            parsed = strtoull(argv[++index], &end, 10);
+            if (errno != 0 || end == argv[index] || *end != '\0') {
+                break;
+            }
+            config.swap_max = (uint64_t)parsed;
+        } else if (strcmp(argv[index], "--cpu-quota") == 0) {
+            if (!mc_parse_positive_u64(argv[++index], UINT64_C(102400000),
+                                       &config.cpu_quota)) {
+                break;
+            }
+        } else if (strcmp(argv[index], "--pids-limit") == 0) {
+            if (!mc_parse_positive_u64(argv[++index], UINT64_C(4194304),
+                                       &config.pids_max)) {
+                break;
+            }
         } else {
             break;
         }
@@ -77,7 +101,8 @@ int main(int argc, char **argv) {
     if (config.id == NULL || config.rootfs == NULL || config.hostname == NULL ||
         config.workdir == NULL || config.workdir[0] != '/' || config.command == NULL ||
         config.command[0] == NULL || index >= argc ||
-        (config.detach != 0 && config.ready_fd < 0)) {
+        (config.detach != 0 && config.ready_fd < 0) || config.memory_max == 0U ||
+        config.cpu_quota == 0U || config.pids_max == 0U) {
         usage();
         free(environment);
         return MC_EXIT_USAGE;
