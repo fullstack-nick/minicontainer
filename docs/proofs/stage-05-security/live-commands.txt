@@ -1,0 +1,17 @@
+PASS
+
+The live GCP adversarial suite proved:
+- effective, permitted, inheritable, ambient, and bounding capabilities are empty by default;
+- one declared CHOWN capability appears exactly as requested and remains user-namespace scoped;
+- `no_new_privs=1`, locked securebits, supplementary-group clearing, and FD closure;
+- namespace creation, mount, ptrace, BPF, and raw sockets fail with the policy result;
+- ordinary file, TCP socket, and process creation behavior remains functional;
+- custom JSON seccomp profiles only narrow the built-in allowlist and unsafe profiles fail;
+- read-only root rejects writes while the isolated tmpfs remains writable;
+- allowlisted read-only bind and bounded tmpfs mounts work;
+- forbidden sources and an image symlink target escape fail safely;
+- a host sentinel is unreachable and inspect output excludes an environment secret;
+- stored config mode is 0600.
+
+Result:
+PASS no-new-privileges, caps, seccomp, read-only root, safe bind/tmpfs, host isolation

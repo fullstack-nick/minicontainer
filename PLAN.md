@@ -579,6 +579,6 @@ The demo sequence is fixed: import pinned Alpine rootfs; run an isolated shell c
 | 2. Resources/stats | v0.2 | Complete | GCC+Clang+cgroup integration PASS | CI+CodeQL PASS | Exact artifact on private e2-micro PASS | `docs/proofs/stage-02-resources-stats/` |
 | 3. Lifecycle/recovery | v0.3 | Complete | GCC+Clang+lifecycle/recovery PASS | CI+CodeQL PASS | Exact artifact on private e2-micro PASS | `docs/proofs/stage-03-lifecycle-recovery/` |
 | 4. Networking | v0.4 | Complete | PASS | PASS | PASS | `docs/proofs/stage-04-networking/` |
-| 5. Security | v0.5 | In progress | GCC+Clang+adversarial security integration PASS | Pending | Pending | Pending |
+| 5. Security | v0.5 | Complete | PASS | PASS | PASS | `docs/proofs/stage-05-security/` |
 | 6. Reliability/operations | v0.6 | Not started | — | — | — | — |
 | 7. Release/demo | v1.0 | Not started | — | — | — | — |

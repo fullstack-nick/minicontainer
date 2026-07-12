@@ -1,0 +1,5 @@
+PASS
+
+The security test removed every generated container and state workspace through its cleanup
+trap. Uploaded probe/test files were deleted. Final checks found zero shims, scopes, veths,
+or temporary security workspaces. The VM remained the required private e2-micro.
