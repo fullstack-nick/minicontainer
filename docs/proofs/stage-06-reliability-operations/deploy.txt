@@ -1,0 +1,11 @@
+PASS
+
+VM: minicontainer-vm, us-west1-a, private/IAP-only
+Machine type: e2-micro; no resize was required
+Package: minicontainer_0.0.1_amd64.deb
+Package SHA-256: 6e9bde35d4c56d3333594f816a33e584af02120e168124c2a4d25a02fdf33411
+Installed version: 0.0.1
+Embedded Git commit: e8d21384b9bcecd32ec27be9e23843e43e0ce012
+
+Installed modes were verified as 0755 for the binary and 0644 for the config and systemd
+unit. The remote package digest matched the exact local artifact.

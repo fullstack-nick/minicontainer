@@ -1,0 +1,6 @@
+PASS
+
+All stress, OOM, log-pressure, package, and reboot-proof containers were removed. Transient
+systemd proof units and uploaded helper binaries/scripts were deleted. No larger VM was
+created, so no resize cleanup was needed. The final cloud state remains the required single
+private e2-micro with no NAT or external address.

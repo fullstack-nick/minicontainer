@@ -1,0 +1,12 @@
+PASS
+
+Before reset, the proof deliberately SIGKILLed the recorded shim while leaving durable
+state marked running. After a GCE reset:
+- boot pass 1: reconciled one stale-running record to stopped;
+- boot pass 2 after a bounded delay: reconciled zero records;
+- a transient systemd unit started the stored container;
+- namespace-aware exec succeeded in the restored workload;
+- output: RESTORED reboot-demo after boot reconciliation;
+- output: PASS boot reconciliation and systemd workload restoration.
+
+The proof unit and container were removed afterward.

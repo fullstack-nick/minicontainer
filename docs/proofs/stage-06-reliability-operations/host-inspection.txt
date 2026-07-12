@@ -1,0 +1,6 @@
+PASS
+
+Final GCP inventory contains exactly one private running e2-micro, no external IPv4, and
+no Cloud Router/NAT. The reconciler is enabled. Final VM inspection found zero containers,
+shims, systemd scopes, per-container cgroups, veths, nft ownership rules, runtime entries,
+overlay mounts, or test workspaces. Running `gc` again reported `reconciled=0`.

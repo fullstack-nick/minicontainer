@@ -1,0 +1,12 @@
+PASS
+
+Exact-candidate live GCP result:
+PASS sequential=100, concurrency=8, exec-stop races, OOM storms, log rotation, zero leaks
+
+Coverage:
+- 100 create/run/remove cycles;
+- eight simultaneous detached workloads;
+- twenty exec calls racing a timed stop;
+- three independent 16 MiB cgroup OOM kills against 64 MiB allocations;
+- 3 MiB detached log pressure with 1 MiB rotation and three-file retention;
+- final process, scope, cgroup, veth, nftables, overlay, runtime-dir, and workspace audit.

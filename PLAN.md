@@ -580,5 +580,5 @@ The demo sequence is fixed: import pinned Alpine rootfs; run an isolated shell c
 | 3. Lifecycle/recovery | v0.3 | Complete | GCC+Clang+lifecycle/recovery PASS | CI+CodeQL PASS | Exact artifact on private e2-micro PASS | `docs/proofs/stage-03-lifecycle-recovery/` |
 | 4. Networking | v0.4 | Complete | PASS | PASS | PASS | `docs/proofs/stage-04-networking/` |
 | 5. Security | v0.5 | Complete | PASS | PASS | PASS | `docs/proofs/stage-05-security/` |
-| 6. Reliability/operations | v0.6 | In progress | Focused reliability integration PASS | Pending | Pending | Pending |
+| 6. Reliability/operations | v0.6 | Complete | PASS | PASS | PASS | `docs/proofs/stage-06-reliability-operations/` |
 | 7. Release/demo | v1.0 | Not started | — | — | — | — |

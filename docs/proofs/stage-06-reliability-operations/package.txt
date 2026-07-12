@@ -1,0 +1,9 @@
+PASS
+
+Live package lifecycle result:
+PASS install, same-version upgrade, rollback, roll-forward, uninstall, state preservation
+
+The test installed the Stage 6 package, started its reconciler, rolled back to the exact
+Stage 5 package, rolled forward, removed the package while preserving a state sentinel,
+and reinstalled the current package. Debian control hooks kept the unit enablement and
+daemon reload behavior coherent.

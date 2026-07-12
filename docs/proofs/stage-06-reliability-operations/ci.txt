@@ -1,0 +1,9 @@
+PASS
+
+Candidate CI (GCC, Clang, privileged runtime/network/security/reliability, Terraform):
+https://github.com/fullstack-nick/minicontainer/actions/runs/29199492057
+Conclusion: success
+
+Candidate CodeQL security-extended:
+https://github.com/fullstack-nick/minicontainer/actions/runs/29199492101
+Conclusion: success
