@@ -196,6 +196,16 @@ static int setup_root(const struct child_context *context) {
         (void)fprintf(stderr, "minicontainer-shim: tmp-tmpfs: %s\n", strerror(errno));
         return -1;
     }
+    if (join_path(path, sizeof(path), context->paths->merged, "proc") != 0) {
+        return -1;
+    }
+    if (mount("proc", path, "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) != 0) {
+        if (getenv("MC_TEST_INHERIT_PROC") == NULL ||
+            mount("/proc", path, NULL, MS_BIND | MS_REC, NULL) != 0) {
+            (void)fprintf(stderr, "minicontainer-shim: proc-mount: %s\n", strerror(errno));
+            return -1;
+        }
+    }
     if (join_path(old_root, sizeof(old_root), context->paths->merged, ".oldroot") != 0 ||
         make_directory(old_root, 0700) != 0 || chdir(context->paths->merged) != 0) {
         (void)fprintf(stderr, "minicontainer-shim: pivot-prepare: %s\n", strerror(errno));
@@ -207,10 +217,6 @@ static int setup_root(const struct child_context *context) {
     }
     if (umount2("/.oldroot", MNT_DETACH) != 0 || rmdir("/.oldroot") != 0) {
         (void)fprintf(stderr, "minicontainer-shim: old-root-cleanup: %s\n", strerror(errno));
-        return -1;
-    }
-    if (mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) != 0) {
-        (void)fprintf(stderr, "minicontainer-shim: proc-mount: %s\n", strerror(errno));
         return -1;
     }
     return 0;

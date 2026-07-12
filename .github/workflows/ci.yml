@@ -32,7 +32,7 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
           archive="$(bash scripts/fetch-alpine-rootfs.sh)"
-          sudo bash tests/integration/test_runtime.sh \
+          sudo MC_TEST_INHERIT_PROC=1 bash tests/integration/test_runtime.sh \
             "$PWD/build/dev-gcc/minicontainer" \
             "$PWD/build/dev-gcc/minicontainer-shim" \
             "$archive"

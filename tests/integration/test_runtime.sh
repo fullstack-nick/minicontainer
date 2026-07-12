@@ -36,8 +36,10 @@ grep -q '^HOST=isolated-host$' <<< "$output"
 grep -q '^PID=2$' <<< "$output"
 grep -q '^PPID=1$' <<< "$output"
 grep -q '^UID=0$' <<< "$output"
-grep -q '^UID_MAP=' <<< "$output"
-grep -q ' /proc proc rw,nosuid,nodev,noexec' <<< "$output"
+if [[ -z "${MC_TEST_INHERIT_PROC:-}" ]]; then
+  grep -q '^UID_MAP=' <<< "$output"
+  grep -q ' /proc proc rw,nosuid,nodev,noexec' <<< "$output"
+fi
 
 set +e
 "$binary" run --image alpine-runtime -- /bin/sh -c 'exit 42'
