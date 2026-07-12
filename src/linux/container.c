@@ -2,6 +2,7 @@
 
 #include "minicontainer/cgroup.h"
 #include "minicontainer/fs.h"
+#include "minicontainer/network.h"
 #include "minicontainer/subid.h"
 
 #include <errno.h>
@@ -629,6 +630,7 @@ static void cleanup_ephemeral(const struct runtime_paths *paths) {
 
 static int write_state(const struct runtime_paths *paths, const struct mc_run_config *config,
                        const struct mc_cgroup *cgroup, const struct namespace_identity *namespaces,
+                       const struct mc_network *network,
                        const char *state, pid_t init_pid, int exit_code,
                        struct mc_error *error) {
     char document[2048];
@@ -673,6 +675,8 @@ static int write_state(const struct runtime_paths *paths, const struct mc_run_co
                                 "\"uts\":%llu,\"ipc\":%llu,\"network\":%llu,\"cgroup\":%llu},"
                                 "\"updated_at_unix_ns\":%llu,\"build_version\":\"%s\","
                                 "\"git_commit\":\"%s\","
+                                "\"network_mode\":\"%s\",\"ipv4_host\":%u,"
+                                "\"host_interface\":\"%s\","
                                 "\"cgroup_path\":\"%s\"}\n",
                                 config->id, state, (long)getpid(), start_time,
                                 (long)init_pid, exit_code, init_start_time,
@@ -686,6 +690,8 @@ static int write_state(const struct runtime_paths *paths, const struct mc_run_co
                                 ((unsigned long long)now.tv_sec * UINT64_C(1000000000)) +
                                     (unsigned long long)now.tv_nsec,
                                 MC_VERSION, MC_GIT_COMMIT,
+                                config->network_bridge != 0 ? "bridge" : "none",
+                                config->ipv4_host, network->host_interface,
                                 cgroup->payload[0] != '\0' ? cgroup->payload : "");
     if (length < 0 || (size_t)length >= sizeof(document)) {
         mc_error_set(error, MC_EXIT_INTERNAL, EOVERFLOW, "write-state", config->id,
@@ -700,6 +706,7 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     uint32_t subordinate_gid;
     struct runtime_paths paths;
     struct mc_cgroup cgroup;
+    struct mc_network network = {0};
     struct namespace_identity namespaces = {0};
     int barrier[2];
     int ready[2];
@@ -778,6 +785,9 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
         return -1;
     }
     if (configure_id_maps(child, subordinate_uid, subordinate_gid) != 0 ||
+        (config->network_bridge != 0 &&
+         mc_network_setup(config->id, child, config->ipv4_host, config->publishes,
+                          config->publish_count, &network, error) != 0) ||
         write(barrier[1], "1", 1U) != 1) {
         const int saved = errno;
         (void)kill(child, SIGKILL);
@@ -791,12 +801,14 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
             (void)close(pidfd);
         }
         cleanup_ephemeral(&paths);
+        mc_network_destroy(&network);
         if (chown(paths.base, 0, 0) != 0 && error->code == 0)
             mc_error_set(error, MC_EXIT_RUNTIME, errno, "cleanup", paths.base,
                          "cannot restore state directory ownership");
         mc_cgroup_destroy(&cgroup);
-        mc_error_set(error, MC_EXIT_RUNTIME, saved, "uid-gid-map", config->id,
-                     "cannot configure subordinate identity mapping");
+        if (error->code == 0)
+            mc_error_set(error, MC_EXIT_RUNTIME, saved, "runtime-setup", config->id,
+                         "cannot configure identity mapping or network barrier");
         return -1;
     }
     (void)close(barrier[1]);
@@ -808,7 +820,8 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
         capture_namespaces(child, &namespaces);
         control_listener = open_control_socket(&paths, error);
         if (control_listener < 0 ||
-            write_state(&paths, config, &cgroup, &namespaces, "running", child, 0, error) != 0) {
+            write_state(&paths, config, &cgroup, &namespaces, &network,
+                        "running", child, 0, error) != 0) {
             (void)kill(child, SIGKILL);
             ready_count = 0;
         }
@@ -861,6 +874,7 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
     (void)unlink(paths.control);
     (void)rmdir(paths.runtime);
     mc_cgroup_destroy(&cgroup);
+    mc_network_destroy(&network);
     if (status >= 0 && WIFEXITED(status)) {
         exit_code = WEXITSTATUS(status);
     } else if (status >= 0 && WIFSIGNALED(status)) {
@@ -874,7 +888,7 @@ int mc_container_run(const struct mc_run_config *config, struct mc_error *error)
                      "cannot restore state directory ownership");
     }
     (void)chmod(paths.base, 0700);
-    (void)write_state(&paths, config, &cgroup, &namespaces,
+    (void)write_state(&paths, config, &cgroup, &namespaces, &network,
                       ready_count == 1 ? "stopped" : "failed",
                       child, exit_code, error);
     if (status < 0) {

@@ -1,8 +1,10 @@
 #include "minicontainer/state.h"
 
 #include "minicontainer/fs.h"
+#include "minicontainer/network.h"
 
 #include <dirent.h>
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <ftw.h>
@@ -10,6 +12,7 @@
 #include <linux/sched.h>
 #include <stdio.h>
 #include <signal.h>
+#include <netinet/in.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
@@ -84,11 +87,13 @@ static json_object *config_json(const struct mc_run_config *config, const char *
     json_object *resources = json_object_new_object();
     json_object *environment = json_object_new_array();
     json_object *command = json_object_new_array();
+    json_object *publishes = json_object_new_array();
     size_t index;
     struct timespec now;
     const char *digest = strstr(config->rootfs, "/sha256/");
     (void)clock_gettime(CLOCK_REALTIME, &now);
-    if (root == NULL || resources == NULL || environment == NULL || command == NULL) goto fail;
+    if (root == NULL || resources == NULL || environment == NULL || command == NULL ||
+        publishes == NULL) goto fail;
     json_object_object_add(root, "schema_version", json_object_new_int(1));
     json_object_object_add(root, "id", json_object_new_string(config->id));
     if (config->name != NULL) json_object_object_add(root, "name", json_object_new_string(config->name));
@@ -106,6 +111,23 @@ static json_object *config_json(const struct mc_run_config *config, const char *
     json_object_object_add(root, "workdir", json_object_new_string(config->workdir));
     json_object_object_add(root, "user", json_object_new_int64((int64_t)config->user));
     json_object_object_add(root, "group", json_object_new_int64((int64_t)config->group));
+    json_object_object_add(root, "network_mode",
+                           json_object_new_string(config->network_bridge != 0 ? "bridge" : "none"));
+    json_object_object_add(root, "ipv4_host", json_object_new_int64((int64_t)config->ipv4_host));
+    for (index = 0U; index < config->publish_count; ++index) {
+        json_object *published = json_object_new_object();
+        if (published == NULL) goto fail;
+        json_object_object_add(published, "host_ipv4",
+                               json_object_new_int64(config->publishes[index].host_ipv4));
+        json_object_object_add(published, "host_port",
+                               json_object_new_int(config->publishes[index].host_port));
+        json_object_object_add(published, "container_port",
+                               json_object_new_int(config->publishes[index].container_port));
+        json_object_object_add(published, "protocol",
+                               json_object_new_int(config->publishes[index].protocol));
+        json_object_array_add(publishes, published);
+    }
+    json_object_object_add(root, "publishes", publishes);
     json_object_object_add(root, "created_at_unix_ns", json_object_new_uint64(
         ((uint64_t)now.tv_sec * UINT64_C(1000000000)) + (uint64_t)now.tv_nsec));
     json_object_object_add(root, "build_version", json_object_new_string(MC_VERSION));
@@ -124,7 +146,7 @@ static json_object *config_json(const struct mc_run_config *config, const char *
     return root;
 fail:
     json_object_put(root); json_object_put(resources); json_object_put(environment);
-    json_object_put(command); errno = ENOMEM; return NULL;
+    json_object_put(command); json_object_put(publishes); errno = ENOMEM; return NULL;
 }
 
 static int name_is_taken(const char *name, const char *own_id) {
@@ -150,6 +172,62 @@ static int name_is_taken(const char *name, const char *own_id) {
     (void)closedir(stream); return 0;
 }
 
+static int published_port_is_taken(const struct mc_run_config *config) {
+    char directory[PATH_MAX];
+    DIR *stream;
+    struct dirent *entry;
+    size_t requested_index;
+    if (config->publish_count == 0U) return 0;
+    if (snprintf(directory, sizeof(directory), "%s/containers", mc_state_dir()) < 0) return 1;
+    stream = opendir(directory);
+    if (stream == NULL) return errno == ENOENT ? 0 : 1;
+    while ((entry = readdir(stream)) != NULL) {
+        char path[PATH_MAX]; json_object *root, *array;
+        size_t existing_index;
+        if (entry->d_name[0] == '.' || strcmp(entry->d_name, config->id) == 0 ||
+            make_path(path, sizeof(path), entry->d_name, "config.json") != 0) continue;
+        root = json_object_from_file(path);
+        if (root == NULL || !json_object_object_get_ex(root, "publishes", &array) ||
+            json_object_get_type(array) != json_type_array) { json_object_put(root); continue; }
+        for (existing_index = 0U; existing_index < json_object_array_length(array); ++existing_index) {
+            json_object *published = json_object_array_get_idx(array, existing_index);
+            json_object *value;
+            uint32_t host_ipv4; uint16_t host_port; uint8_t protocol;
+            if (!json_object_object_get_ex(published, "host_ipv4", &value)) continue;
+            host_ipv4 = (uint32_t)json_object_get_int64(value);
+            if (!json_object_object_get_ex(published, "host_port", &value)) continue;
+            host_port = (uint16_t)json_object_get_int(value);
+            if (!json_object_object_get_ex(published, "protocol", &value)) continue;
+            protocol = (uint8_t)json_object_get_int(value);
+            for (requested_index = 0U; requested_index < config->publish_count; ++requested_index) {
+                const struct mc_publish *requested = &config->publishes[requested_index];
+                if (requested->protocol == protocol && requested->host_port == host_port &&
+                    (requested->host_ipv4 == 0U || host_ipv4 == 0U ||
+                     requested->host_ipv4 == host_ipv4)) {
+                    json_object_put(root); (void)closedir(stream); return 1;
+                }
+            }
+        }
+        json_object_put(root);
+    }
+    (void)closedir(stream); return 0;
+}
+
+static int host_port_is_available(const struct mc_publish *published) {
+    struct sockaddr_in address;
+    int descriptor = socket(AF_INET,
+                            published->protocol == IPPROTO_TCP ? SOCK_STREAM : SOCK_DGRAM,
+                            0);
+    int result;
+    if (descriptor < 0) return 0;
+    (void)memset(&address, 0, sizeof(address)); address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(published->host_ipv4);
+    address.sin_port = htons(published->host_port);
+    result = bind(descriptor, (const struct sockaddr *)&address, sizeof(address));
+    (void)close(descriptor);
+    return result == 0;
+}
+
 int mc_state_save_config(const struct mc_run_config *config, const char *image,
                          struct mc_error *error) {
     char directory[PATH_MAX], path[PATH_MAX];
@@ -160,6 +238,21 @@ int mc_state_save_config(const struct mc_run_config *config, const char *image,
         mc_error_set(error, MC_EXIT_CONFLICT, EEXIST, "save-config", config->name,
                      "container name already exists");
         return -1;
+    }
+    if (published_port_is_taken(config) != 0) {
+        mc_error_set(error, MC_EXIT_CONFLICT, EADDRINUSE, "save-config", config->id,
+                     "published host address and port already exists");
+        return -1;
+    }
+    {
+        size_t index;
+        for (index = 0U; index < config->publish_count; ++index) {
+            if (!host_port_is_available(&config->publishes[index])) {
+                mc_error_set(error, MC_EXIT_CONFLICT, EADDRINUSE, "save-config", config->id,
+                             "published host address and port is already bound");
+                return -1;
+            }
+        }
     }
     root = config_json(config, image);
     if (root == NULL) {
@@ -222,6 +315,24 @@ static int load_arrays(json_object *root, struct mc_run_config *config) {
     if (config->command == NULL || count == 0U) return -1;
     for (index = 0U; index < count; ++index)
         config->command[index] = strdup(json_object_get_string(json_object_array_get_idx(array, index)));
+    if (!json_object_object_get_ex(root, "publishes", &array) ||
+        json_object_get_type(array) != json_type_array) return -1;
+    count = json_object_array_length(array);
+    config->publishes = calloc(count == 0U ? 1U : count, sizeof(*config->publishes));
+    if (config->publishes == NULL) return -1;
+    config->publish_count = count;
+    for (index = 0U; index < count; ++index) {
+        json_object *published = json_object_array_get_idx(array, index);
+        json_object *value;
+        if (!json_object_object_get_ex(published, "host_ipv4", &value)) return -1;
+        config->publishes[index].host_ipv4 = (uint32_t)json_object_get_int64(value);
+        if (!json_object_object_get_ex(published, "host_port", &value)) return -1;
+        config->publishes[index].host_port = (uint16_t)json_object_get_int(value);
+        if (!json_object_object_get_ex(published, "container_port", &value)) return -1;
+        config->publishes[index].container_port = (uint16_t)json_object_get_int(value);
+        if (!json_object_object_get_ex(published, "protocol", &value)) return -1;
+        config->publishes[index].protocol = (uint8_t)json_object_get_int(value);
+    }
     return 0;
 }
 
@@ -243,6 +354,10 @@ int mc_state_load_config(const char *reference, struct mc_run_config *config,
     config->user = (uid_t)json_object_get_int64(value);
     if (!json_object_object_get_ex(root, "group", &value)) goto invalid_loaded;
     config->group = (gid_t)json_object_get_int64(value);
+    if (!json_object_object_get_ex(root, "network_mode", &value)) goto invalid_loaded;
+    config->network_bridge = strcmp(json_object_get_string(value), "bridge") == 0;
+    if (!json_object_object_get_ex(root, "ipv4_host", &value)) goto invalid_loaded;
+    config->ipv4_host = (unsigned int)json_object_get_int64(value);
     if (!json_object_object_get_ex(root, "resources", &resources)) goto invalid_loaded;
 #define LOAD_U64(key, member) do { if (!json_object_object_get_ex(resources, key, &value)) goto invalid_loaded; config->member = json_object_get_uint64(value); } while (0)
     LOAD_U64("memory_max", memory_max); LOAD_U64("swap_max", swap_max);
@@ -266,6 +381,7 @@ void mc_state_free_config(struct mc_run_config *config) {
     free(config->id); free(config->name); free(config->rootfs); free(config->hostname); free(config->workdir);
     for (index = 0U; index < config->environment_count; ++index) free(config->environment[index]);
     free(config->environment);
+    free(config->publishes);
     if (config->command != NULL) {
         for (index = 0U; config->command[index] != NULL; ++index) free(config->command[index]);
         free(config->command);
@@ -576,9 +692,52 @@ int mc_state_reconcile(int verbose, struct mc_error *error) {
             json_object_put(root); (void)closedir(stream); return -1;
         }
         json_object_put(root); remove_ephemeral_paths(entry->d_name); ++repaired;
+        mc_network_cleanup_owned(entry->d_name);
         if (verbose != 0) (void)printf("reconciled %.12s stale-running -> stopped\n", entry->d_name);
     }
     (void)closedir(stream);
     if (verbose != 0) (void)printf("reconciled=%d\n", repaired);
     return 0;
+}
+
+int mc_state_allocate_ip(const char *id, unsigned int *ipv4_host,
+                         struct mc_error *error) {
+    char directory[PATH_MAX];
+    unsigned char used[256] = {0};
+    DIR *stream;
+    struct dirent *entry;
+    size_t index;
+    unsigned int candidate;
+    if (id == NULL || ipv4_host == NULL) return -1;
+    if (snprintf(directory, sizeof(directory), "%s/containers", mc_state_dir()) < 0) return -1;
+    stream = opendir(directory);
+    if (stream != NULL) {
+        while ((entry = readdir(stream)) != NULL) {
+            char path[PATH_MAX]; json_object *root, *value;
+            unsigned int address;
+            if (entry->d_name[0] == '.' ||
+                make_path(path, sizeof(path), entry->d_name, "config.json") != 0) continue;
+            root = json_object_from_file(path);
+            if (root != NULL && json_object_object_get_ex(root, "ipv4_host", &value)) {
+                address = (unsigned int)json_object_get_int64(value);
+                if ((address & UINT32_C(0xffffff00)) == UINT32_C(0x0a2c0000))
+                    used[address & UINT32_C(0xff)] = 1U;
+            }
+            json_object_put(root);
+        }
+        (void)closedir(stream);
+    } else if (errno != ENOENT) {
+        mc_error_set(error, MC_EXIT_RUNTIME, errno, "ipam", directory,
+                     "cannot inspect address leases"); return -1;
+    }
+    for (index = 0U; index < 253U; ++index) {
+        candidate = 2U + (unsigned int)index;
+        if (used[candidate] == 0U) {
+            *ipv4_host = UINT32_C(0x0a2c0000) | candidate;
+            return 0;
+        }
+    }
+    mc_error_set(error, MC_EXIT_CONFLICT, ENOSPC, "ipam", "10.44.0.0/24",
+                 "container address pool is exhausted");
+    return -1;
 }

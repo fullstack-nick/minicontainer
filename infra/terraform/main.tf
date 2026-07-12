@@ -92,6 +92,32 @@ resource "google_compute_instance" "runtime" {
   depends_on = [google_project_service.required]
 }
 
+resource "google_compute_router" "temporary" {
+  count   = var.enable_temporary_nat ? 1 : 0
+  name    = "minicontainer-temporary-router"
+  region  = var.region
+  network = google_compute_network.main.id
+}
+
+resource "google_compute_router_nat" "temporary" {
+  count                              = var.enable_temporary_nat ? 1 : 0
+  name                               = "minicontainer-temporary-nat"
+  router                             = google_compute_router.temporary[0].name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"
+
+  subnetwork {
+    name                    = google_compute_subnetwork.main.id
+    source_ip_ranges_to_nat = ["ALL_IP_RANGES"]
+  }
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
+}
+
 resource "google_billing_budget" "monthly" {
   billing_account = var.billing_account
   display_name    = "MiniContainer monthly budget"

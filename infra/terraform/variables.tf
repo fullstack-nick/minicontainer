@@ -22,3 +22,8 @@ variable "billing_account" {
   type      = string
   sensitive = true
 }
+variable "enable_temporary_nat" {
+  type        = bool
+  default     = false
+  description = "Stage-gated outbound NAT; must be false at every stage exit."
+}

@@ -7,6 +7,13 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+struct mc_publish {
+    uint32_t host_ipv4;
+    uint16_t host_port;
+    uint16_t container_port;
+    uint8_t protocol;
+};
+
 struct mc_run_config {
     char *id;
     char *name;
@@ -23,6 +30,10 @@ struct mc_run_config {
     uint64_t swap_max;
     uint64_t cpu_quota;
     uint64_t pids_max;
+    int network_bridge;
+    unsigned int ipv4_host;
+    struct mc_publish *publishes;
+    size_t publish_count;
     char **command;
 };
 

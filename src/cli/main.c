@@ -5,6 +5,7 @@
 #include "minicontainer/image.h"
 #include "minicontainer/id.h"
 #include "minicontainer/runtime.h"
+#include "minicontainer/network.h"
 #include "minicontainer/resource.h"
 #include "minicontainer/stats.h"
 #include "minicontainer/state.h"
@@ -34,6 +35,8 @@ static void usage(FILE *stream) {
                   "  minicontainer run [--detach] --image NAME [--hostname NAME] [--env KEY=VALUE] "
                   "[--workdir PATH] [--user UID[:GID]] [--memory BYTES] "
                   "[--memory-swap BYTES] [--cpus DECIMAL] [--pids-limit COUNT] "
+                  "[--network bridge|none] "
+                  "[--publish HOST_IP:HOST_PORT:CONTAINER_PORT/tcp|udp] "
                   "-- COMMAND [ARG...]\n"
                   "  minicontainer create [--name NAME] --image NAME [run flags] -- COMMAND [ARG...]\n"
                   "  minicontainer start ID\n"
@@ -397,7 +400,9 @@ rm_error:
         char default_workdir[] = "/";
         char *workdir = default_workdir;
         char **environment = calloc((size_t)argc, sizeof(*environment));
+        struct mc_publish *publishes = calloc((size_t)argc, sizeof(*publishes));
         size_t environment_count = 0U;
+        size_t publish_count = 0U;
         unsigned int user = 0U;
         unsigned int group = 0U;
         int detach = 0;
@@ -406,12 +411,15 @@ rm_error:
         uint64_t swap_max = 0U;
         uint64_t cpu_quota = UINT64_C(50000);
         uint64_t pids_max = UINT64_C(128);
+        int network_bridge = 1;
         int command_index = -1;
         int index;
         struct mc_run_config config;
         int result;
 
-        if (environment == NULL) {
+        if (environment == NULL || publishes == NULL) {
+            free(publishes);
+            free(environment);
             return MC_EXIT_INTERNAL;
         }
         for (index = 2; index < argc; ++index) {
@@ -424,7 +432,7 @@ rm_error:
             } else if (strcmp(argv[index], "--name") == 0 && index + 1 < argc) {
                 name = argv[++index];
                 if (!mc_valid_name(name)) {
-                    free(environment); usage(stderr); return MC_EXIT_USAGE;
+                    free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE;
                 }
             } else if (strcmp(argv[index], "--image") == 0 && index + 1 < argc) {
                 image = argv[++index];
@@ -433,20 +441,20 @@ rm_error:
             } else if (strcmp(argv[index], "--workdir") == 0 && index + 1 < argc) {
                 workdir = argv[++index];
                 if (workdir[0] != '/') {
-                    free(environment);
+                    free(publishes); free(environment);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
             } else if (strcmp(argv[index], "--user") == 0 && index + 1 < argc) {
                 if (!mc_parse_user(argv[++index], &user, &group)) {
-                    free(environment);
+                    free(publishes); free(environment);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
             } else if (strcmp(argv[index], "--env") == 0 && index + 1 < argc) {
                 char *assignment = argv[++index];
                 if (!mc_valid_environment(assignment)) {
-                    free(environment);
+                    free(publishes); free(environment);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
@@ -454,7 +462,7 @@ rm_error:
             } else if ((strcmp(argv[index], "--memory") == 0 ||
                         strcmp(argv[index], "--mem") == 0) && index + 1 < argc) {
                 if (!mc_parse_bytes(argv[++index], &memory_max)) {
-                    free(environment);
+                    free(publishes); free(environment);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
@@ -464,25 +472,45 @@ rm_error:
                 if (strcmp(swap, "0") == 0) {
                     swap_max = 0U;
                 } else if (!mc_parse_bytes(swap, &swap_max)) {
-                    free(environment);
+                    free(publishes); free(environment);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
             } else if ((strcmp(argv[index], "--cpus") == 0 ||
                         strcmp(argv[index], "--cpu") == 0) && index + 1 < argc) {
                 if (!mc_parse_cpu_quota(argv[++index], &cpu_quota)) {
-                    free(environment);
+                    free(publishes); free(environment);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
             } else if (strcmp(argv[index], "--pids-limit") == 0 && index + 1 < argc) {
                 if (!mc_parse_positive_u64(argv[++index], UINT64_C(4194304), &pids_max)) {
-                    free(environment);
+                    free(publishes); free(environment);
                     usage(stderr);
                     return MC_EXIT_USAGE;
                 }
+            } else if (strcmp(argv[index], "--network") == 0 && index + 1 < argc) {
+                const char *mode = argv[++index];
+                if (strcmp(mode, "bridge") == 0) network_bridge = 1;
+                else if (strcmp(mode, "none") == 0) network_bridge = 0;
+                else { free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE; }
+            } else if (strcmp(argv[index], "--publish") == 0 && index + 1 < argc) {
+                size_t existing;
+                struct mc_publish parsed;
+                if (!mc_parse_publish(argv[++index], &parsed)) {
+                    free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE;
+                }
+                for (existing = 0U; existing < publish_count; ++existing) {
+                    if (publishes[existing].protocol == parsed.protocol &&
+                        publishes[existing].host_port == parsed.host_port &&
+                        (publishes[existing].host_ipv4 == 0U || parsed.host_ipv4 == 0U ||
+                         publishes[existing].host_ipv4 == parsed.host_ipv4)) {
+                        free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE;
+                    }
+                }
+                publishes[publish_count++] = parsed;
             } else {
-                free(environment);
+                free(publishes); free(environment);
                 usage(stderr);
                 return MC_EXIT_USAGE;
             }
@@ -492,10 +520,10 @@ rm_error:
             mc_generate_id(id, &error) != 0) {
             if (error.code != 0) {
                 mc_error_print(&error, 0);
-                free(environment);
+                free(publishes); free(environment);
                 return error.code;
             }
-            free(environment);
+            free(publishes); free(environment);
             usage(stderr);
             return MC_EXIT_USAGE;
         }
@@ -518,27 +546,40 @@ rm_error:
         config.swap_max = swap_max;
         config.cpu_quota = cpu_quota;
         config.pids_max = pids_max;
+        config.network_bridge = network_bridge;
+        config.ipv4_host = 0U;
+        config.publishes = publishes;
+        config.publish_count = publish_count;
         config.command = &argv[command_index];
+        if (network_bridge == 0 && publish_count > 0U) {
+            free(publishes); free(environment); usage(stderr); return MC_EXIT_USAGE;
+        }
         {
             struct mc_state_lock registry = {-1};
             struct mc_state_lock container = {-1};
             if (mc_state_registry_lock(&registry, &error) != 0 ||
                 mc_state_reconcile(0, &error) != 0 ||
                 mc_state_container_lock(id, &container, &error) != 0 ||
+                (config.network_bridge != 0 &&
+                 mc_state_allocate_ip(id, &config.ipv4_host, &error) != 0) ||
                 mc_state_save_config(&config, image, &error) != 0 ||
                 (create_only != 0 && mc_state_mark_created(id, &error) != 0)) {
+                struct mc_error cleanup_error = {0};
                 mc_error_print(&error, 0); mc_state_unlock(&container);
-                mc_state_unlock(&registry); free(environment); return error.code;
+                (void)mc_state_remove(id, &cleanup_error);
+                mc_state_unlock(&registry); free(publishes); free(environment); return error.code;
             }
             mc_state_unlock(&container); mc_state_unlock(&registry);
         }
         if (create_only != 0) {
             (void)printf("%s\n", id);
             free(environment);
+            free(publishes);
             return MC_EXIT_OK;
         }
         result = mc_launch_shim(&config, &error);
         free(environment);
+        free(publishes);
         if (result < 0) {
             mc_error_print(&error, 0);
             return error.code;

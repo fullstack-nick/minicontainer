@@ -27,4 +27,8 @@ run "locked_private_free_tier_topology" {
     condition     = google_compute_firewall.iap.source_ranges == toset(["35.235.240.0/20"])
     error_message = "Ingress must remain restricted to the IAP TCP forwarding range."
   }
+  assert {
+    condition     = length(google_compute_router.temporary) == 0 && length(google_compute_router_nat.temporary) == 0
+    error_message = "Temporary Cloud NAT must be absent from the default/final topology."
+  }
 }

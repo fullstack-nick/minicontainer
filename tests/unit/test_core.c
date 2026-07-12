@@ -1,7 +1,9 @@
 #include "minicontainer/validate.h"
 #include "minicontainer/resource.h"
+#include "minicontainer/network.h"
 
 #include <stdio.h>
+#include <netinet/in.h>
 
 static int failures = 0;
 
@@ -48,6 +50,21 @@ int main(void) {
         expect(mc_parse_cpu_quota("0", &value) == 0, "zero CPU rejected");
         expect(mc_parse_positive_u64("128", UINT64_C(4194304), &value) != 0 && value == 128U,
                "PID limit parsed");
+    }
+    {
+        struct mc_publish published;
+        expect(mc_parse_publish("127.0.0.1:8080:80/tcp", &published) != 0 &&
+                   published.host_ipv4 == UINT32_C(0x7f000001) &&
+                   published.host_port == 8080U && published.container_port == 80U &&
+                   published.protocol == IPPROTO_TCP,
+               "TCP publish parsed");
+        expect(mc_parse_publish("0.0.0.0:5353:53/udp", &published) != 0 &&
+                   published.protocol == IPPROTO_UDP,
+               "UDP wildcard publish parsed");
+        expect(mc_parse_publish("127.0.0.1:0:80/tcp", &published) == 0,
+               "zero host port rejected");
+        expect(mc_parse_publish("127.0.0.1:8080:80/sctp", &published) == 0,
+               "unsupported publish protocol rejected");
     }
     if (failures == 0) {
         (void)puts("PASS core validation tests");

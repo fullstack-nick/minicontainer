@@ -18,6 +18,9 @@ add_library(minicontainer_core STATIC
   src/linux/cgroup.c
   src/linux/container.c
   src/linux/exec.c
+  src/network/netlink.c
+  src/network/nft.c
+  src/network/parse.c
   src/linux/stats.c
   src/runtime/launch.c
   src/runtime/info.c

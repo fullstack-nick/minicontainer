@@ -30,5 +30,7 @@ int mc_state_runtime(const char *reference, char id[33], pid_t *init_pid,
                      unsigned long long *init_start_time, char cgroup[PATH_MAX],
                      struct mc_error *error);
 int mc_state_reconcile(int verbose, struct mc_error *error);
+int mc_state_allocate_ip(const char *id, unsigned int *ipv4_host,
+                         struct mc_error *error);
 
 #endif

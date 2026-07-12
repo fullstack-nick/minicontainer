@@ -98,18 +98,25 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
     static char swap_flag[] = "--memory-swap";
     static char cpu_flag[] = "--cpu-quota";
     static char pids_flag[] = "--pids-limit";
+    static char network_flag[] = "--network";
+    static char ipv4_flag[] = "--ipv4-host";
+    static char bridge_value[] = "bridge";
+    static char none_value[] = "none";
+    static char publish_flag[] = "--publish";
     char user_value[32];
     char ready_value[32];
     char memory_value[32];
     char swap_value[32];
     char cpu_value[32];
     char pids_value[32];
+    char ipv4_value[32];
     char log_directory[PATH_MAX];
     char log_path[PATH_MAX];
     char path[PATH_MAX];
     size_t command_count = 0U;
     size_t index;
     char **arguments;
+    char (*publish_values)[64];
     pid_t child;
     int status;
     int readiness[2] = {-1, -1};
@@ -122,9 +129,13 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
     while (config->command[command_count] != NULL) {
         ++command_count;
     }
-    arguments = calloc(command_count + 25U + (config->environment_count * 2U),
+    arguments = calloc(command_count + 29U + (config->environment_count * 2U) +
+                           (config->publish_count * 2U),
                        sizeof(*arguments));
-    if (arguments == NULL || shim_path(path, error) != 0) {
+    publish_values = calloc(config->publish_count == 0U ? 1U : config->publish_count,
+                            sizeof(*publish_values));
+    if (arguments == NULL || publish_values == NULL || shim_path(path, error) != 0) {
+        free(publish_values);
         free(arguments);
         if (error->code == 0) {
             mc_error_set(error, MC_EXIT_INTERNAL, errno, "launch-shim", "argv",
@@ -158,6 +169,7 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
                    (unsigned long long)config->cpu_quota);
     (void)snprintf(pids_value, sizeof(pids_value), "%llu",
                    (unsigned long long)config->pids_max);
+    (void)snprintf(ipv4_value, sizeof(ipv4_value), "%u", config->ipv4_host);
     arguments[position++] = memory_flag;
     arguments[position++] = memory_value;
     arguments[position++] = swap_flag;
@@ -166,13 +178,26 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
     arguments[position++] = cpu_value;
     arguments[position++] = pids_flag;
     arguments[position++] = pids_value;
+    arguments[position++] = network_flag;
+    arguments[position++] = config->network_bridge != 0 ? bridge_value : none_value;
+    arguments[position++] = ipv4_flag;
+    arguments[position++] = ipv4_value;
+    for (index = 0U; index < config->publish_count; ++index) {
+        (void)snprintf(publish_values[index], sizeof(publish_values[index]), "%u,%u,%u,%u",
+                       config->publishes[index].host_ipv4,
+                       (unsigned int)config->publishes[index].host_port,
+                       (unsigned int)config->publishes[index].container_port,
+                       (unsigned int)config->publishes[index].protocol);
+        arguments[position++] = publish_flag;
+        arguments[position++] = publish_values[index];
+    }
     if (config->detach != 0) {
         if (pipe2(readiness, O_CLOEXEC) != 0 ||
             fcntl(readiness[1], F_SETFD, 0) != 0 ||
             snprintf(ready_value, sizeof(ready_value), "%d", readiness[1]) < 0) {
             mc_error_set(error, MC_EXIT_RUNTIME, errno, "launch-shim", config->id,
                          "cannot create readiness channel");
-            free(arguments);
+            free(publish_values); free(arguments);
             return -1;
         }
         if (snprintf(log_directory, sizeof(log_directory), "%s/%s", mc_log_dir(), config->id) <
@@ -181,7 +206,7 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
             mc_mkdir_p(log_directory, 0750, error) != 0) {
             (void)close(readiness[0]);
             (void)close(readiness[1]);
-            free(arguments);
+            free(publish_values); free(arguments);
             return -1;
         }
         log_descriptor = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0640);
@@ -197,7 +222,7 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
             }
             (void)close(readiness[0]);
             (void)close(readiness[1]);
-            free(arguments);
+            free(publish_values); free(arguments);
             return -1;
         }
         arguments[position++] = detach_flag;
@@ -223,7 +248,7 @@ int mc_launch_shim(const struct mc_run_config *config, struct mc_error *error) {
         execv(path, arguments);
         _exit(126);
     }
-    free(arguments);
+    free(publish_values); free(arguments);
     if (log_descriptor >= 0) {
         (void)close(log_descriptor);
     }
