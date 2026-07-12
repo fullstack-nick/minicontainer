@@ -7,11 +7,28 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
-add_executable(minicontainer src/cli/main.c src/runtime/info.c)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBARCHIVE REQUIRED IMPORTED_TARGET libarchive)
+pkg_check_modules(OPENSSL REQUIRED IMPORTED_TARGET openssl)
+
+add_library(minicontainer_core STATIC
+  src/image/import.c
+  src/runtime/info.c
+  src/util/error.c
+  src/util/fs.c
+  src/util/validate.c)
+target_include_directories(minicontainer_core PUBLIC include)
+target_link_libraries(minicontainer_core PUBLIC PkgConfig::LIBARCHIVE PkgConfig::OPENSSL)
+
+add_executable(minicontainer src/cli/main.c)
+target_link_libraries(minicontainer PRIVATE minicontainer_core)
 target_include_directories(minicontainer PRIVATE include)
 target_compile_definitions(minicontainer PRIVATE
   MC_VERSION="${PROJECT_VERSION}"
   MC_GIT_COMMIT="${MC_GIT_COMMIT}")
+target_compile_options(minicontainer_core PRIVATE
+  -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow -Wformat=2
+  -Wundef -Wstrict-prototypes -Wmissing-prototypes -Wcast-qual -Wwrite-strings)
 target_compile_options(minicontainer PRIVATE
   -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow -Wformat=2
   -Wundef -Wstrict-prototypes -Wmissing-prototypes -Wcast-qual -Wwrite-strings)
@@ -22,6 +39,15 @@ if(BUILD_TESTING)
   set_tests_properties(version PROPERTIES PASS_REGULAR_EXPRESSION "minicontainer 0.0.1")
   add_test(NAME info COMMAND minicontainer info --json)
   set_tests_properties(info PROPERTIES PASS_REGULAR_EXPRESSION "cgroup_version")
+  add_executable(unit_tests tests/unit/test_core.c)
+  target_link_libraries(unit_tests PRIVATE minicontainer_core)
+  target_compile_options(unit_tests PRIVATE
+    -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow -Wformat=2
+    -Wundef -Wstrict-prototypes -Wmissing-prototypes -Wcast-qual -Wwrite-strings)
+  add_test(NAME unit COMMAND unit_tests)
+  add_test(NAME image_import
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/integration/test_image_import.sh
+            $<TARGET_FILE:minicontainer>)
 endif()
 
 install(TARGETS minicontainer RUNTIME DESTINATION bin)
