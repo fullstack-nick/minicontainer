@@ -18,3 +18,13 @@ Observed output:
 {"linux":true,"cgroup_version":2,"ready":true}
 ```
 
+## Release and infrastructure validation
+
+- A Debian package was built from commit `5526755dc1a96b634843c9a4e1cf13f325dfc901` and passed the same CTest suite before packaging.
+- Artifact SHA-256: `25DB3B62BBFC96D7968F98A230C5BD87A41CCDFE071A6611277F09EBC4EA90BA`.
+- Terraform 1.15 initialized with locked Google provider 7.39.0 and `terraform validate` passed.
+- The GCP mutation guard passed with the expected active account/project and rejected a deliberately wrong account.
+
+## Current GCP gate
+
+Project `minicontainer-r7m5o9ld` was created successfully on 2026-07-12. Billing linkage was rejected with `Cloud billing quota exceeded`; consequently Compute Engine API activation, Terraform apply, deployment, and live host proof remain incomplete. No VM or other billable project resource was created.

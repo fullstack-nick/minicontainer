@@ -1,11 +1,11 @@
 /build/
 /build-*/
 /.cache/
-/.terraform/
+**/.terraform/
+/dist/
 *.deb
 *.tar.gz
 compile_commands.json
 infra/terraform/*.tfstate*
 infra/terraform/*.tfvars
 !infra/terraform/example.tfvars
-

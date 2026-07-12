@@ -6,6 +6,9 @@
 #ifndef MC_VERSION
 #define MC_VERSION "unknown"
 #endif
+#ifndef MC_GIT_COMMIT
+#define MC_GIT_COMMIT "unknown"
+#endif
 
 static void usage(FILE *stream) {
     (void)fprintf(stream, "usage: minicontainer <version|info> [--json]\n");
@@ -27,9 +30,10 @@ int main(int argc, char **argv) {
     }
     if (strcmp(argv[1], "version") == 0) {
         if (json != 0) {
-            (void)printf("{\"name\":\"minicontainer\",\"version\":\"%s\"}\n", MC_VERSION);
+            (void)printf("{\"name\":\"minicontainer\",\"version\":\"%s\","
+                         "\"git_commit\":\"%s\"}\n", MC_VERSION, MC_GIT_COMMIT);
         } else {
-            (void)printf("minicontainer %s\n", MC_VERSION);
+            (void)printf("minicontainer %s (%s)\n", MC_VERSION, MC_GIT_COMMIT);
         }
         return 0;
     }
@@ -39,4 +43,3 @@ int main(int argc, char **argv) {
     usage(stderr);
     return 2;
 }
-
