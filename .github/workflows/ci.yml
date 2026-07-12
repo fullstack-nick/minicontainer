@@ -28,6 +28,9 @@ jobs:
         run: |
           sudo useradd --system --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin minicontainer
           echo 'minicontainer:200000:65536' | sudo tee -a /etc/subuid /etc/subgid >/dev/null
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
           archive="$(bash scripts/fetch-alpine-rootfs.sh)"
           sudo bash tests/integration/test_runtime.sh \
             "$PWD/build/dev-gcc/minicontainer" \
