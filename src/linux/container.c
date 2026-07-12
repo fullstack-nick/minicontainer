@@ -281,6 +281,50 @@ static int configure_loopback(void) {
     return close(descriptor);
 }
 
+static int write_generated_file(const char *path, const char *content) {
+    int descriptor = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0644);
+    size_t offset = 0U;
+    const size_t length = strlen(content);
+    if (descriptor < 0) {
+        return -1;
+    }
+    while (offset < length) {
+        const ssize_t count = write(descriptor, content + offset, length - offset);
+        if (count < 0) {
+            const int saved = errno;
+            (void)close(descriptor);
+            errno = saved;
+            return -1;
+        }
+        offset += (size_t)count;
+    }
+    return close(descriptor);
+}
+
+static int generate_identity_files(const char *hostname) {
+    char hostname_file[256];
+    char hosts_file[512];
+    int length;
+
+    length = snprintf(hostname_file, sizeof(hostname_file), "%s\n", hostname);
+    if (length < 0 || (size_t)length >= sizeof(hostname_file)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    length = snprintf(hosts_file, sizeof(hosts_file),
+                      "127.0.0.1 localhost\n127.0.1.1 %s\n::1 localhost ip6-localhost\n",
+                      hostname);
+    if (length < 0 || (size_t)length >= sizeof(hosts_file)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    return write_generated_file("/etc/hostname", hostname_file) == 0 &&
+                   write_generated_file("/etc/hosts", hosts_file) == 0 &&
+                   write_generated_file("/etc/resolv.conf", "nameserver 8.8.8.8\noptions timeout:1 attempts:1\n") == 0
+               ? 0
+               : -1;
+}
+
 static int install_environment(const struct mc_run_config *config) {
     size_t index;
 
@@ -441,6 +485,10 @@ static int child_main(const struct child_context *context) {
         return 125;
     }
     if (setup_root(context) != 0) {
+        return 125;
+    }
+    if (generate_identity_files(context->config->hostname) != 0) {
+        (void)fprintf(stderr, "minicontainer-shim: identity files: %s\n", strerror(errno));
         return 125;
     }
     if (context->config->ready_fd >= 0) {

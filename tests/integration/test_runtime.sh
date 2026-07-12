@@ -29,6 +29,9 @@ output="$("$binary" run --image alpine-runtime --hostname isolated-host -- /bin/
   printf "PPID=%s\n" "$PPID"
   printf "UID=%s\n" "$(id -u)"
   printf "UID_MAP="; cat /proc/self/uid_map
+  printf "ETC_HOSTNAME="; cat /etc/hostname
+  grep -q "127.0.1.1 isolated-host" /etc/hosts
+  grep -q "^nameserver " /etc/resolv.conf
   grep " /proc " /proc/mounts
   touch /stage1-write
   test -f /stage1-write
@@ -37,6 +40,7 @@ grep -q '^HOST=isolated-host$' <<< "$output"
 grep -q '^PID=2$' <<< "$output"
 grep -q '^PPID=1$' <<< "$output"
 grep -q '^UID=0$' <<< "$output"
+grep -q '^ETC_HOSTNAME=isolated-host$' <<< "$output"
 if [[ -z "${MC_TEST_INHERIT_PROC:-}" ]]; then
   grep -q '^UID_MAP=' <<< "$output"
 grep -q ' /proc proc rw,nosuid,nodev,noexec' <<< "$output"
