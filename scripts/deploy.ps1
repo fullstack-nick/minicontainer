@@ -15,5 +15,6 @@ $actual = (Get-FileHash -Algorithm SHA256 $package).Hash.ToLowerInvariant()
 if ($actual -cne $expected) { throw "Package checksum mismatch." }
 
 gcloud compute scp $package "${VmName}:/tmp/minicontainer.deb" --project=$ProjectId --zone=$Zone --tunnel-through-iap
+if ($LASTEXITCODE -ne 0) { throw "Artifact upload failed." }
 gcloud compute ssh $VmName --project=$ProjectId --zone=$Zone --tunnel-through-iap --command="sudo dpkg -i /tmp/minicontainer.deb && minicontainer version --json && sha256sum /tmp/minicontainer.deb"
-
+if ($LASTEXITCODE -ne 0) { throw "Remote package installation or verification failed." }

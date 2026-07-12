@@ -337,8 +337,10 @@ The final topology is:
 - IAP-only ingress from `35.235.240.0/20` to TCP 22 and demo TCP 8080; no internet ingress firewall rule;
 - authenticated live calls through `gcloud compute start-iap-tunnel minicontainer-vm 8080`, with SSH and SCP forced through `--tunnel-through-iap`;
 - one private, public-access-prevented, versioned Standard GCS bucket in `us-west1` for the Terraform backend, with noncurrent versions deleted after 30 days;
-- one USD 10 monthly project-scoped billing budget with actual-spend thresholds at 50%, 80%, and 100% and forecast threshold at 100%;
+- one project-scoped monthly billing budget denominated in the billing account's required currency: TRY 470, locked on 2026-07-12 as approximately USD 10 at the observed USD/TRY rate; actual-spend thresholds at 50%, 80%, and 100% and forecast threshold at 100%;
 - no managed database, load balancer, GKE, Cloud Run, reserved external address, or always-on paid service.
+
+Development capacity policy is locked: begin each stage on the final `e2-micro`, but if host metrics, kernel logs, build/test duration, or repeated resource-pressure failures show that the VM is constraining development, stop it and resize that same VM immediately to the smallest sufficient machine type, up to `n2-standard-16`. Development must not pause merely because `e2-micro` is choking. Heavy stress and benchmark gates may use `n2-standard-16` deliberately. Every resize is recorded in the stage proof. Before the whole project can be declared complete, the VM must be stopped, resized back to `e2-micro`, restarted and reverified; every additional development or load-generator VM must be stopped and deleted so exactly one running `e2-micro` remains.
 
 Project creation and billing linkage use guarded `gcloud` commands because the project must exist before its provider can be initialized. Terraform owns every in-project resource. A Terraform-controlled Cloud Router/NAT pair exists only during Stage 0 OS bootstrap, Stage 4 outbound-network proof, and final security-update windows; it is destroyed before the applicable stage can pass. This accepts a small free-trial-credit charge to avoid a permanently billed external IPv4 address or Cloud NAT. All other artifact transfers use IAP. The final inventory contains no Cloud NAT and no external IPv4.
 
@@ -563,6 +565,8 @@ The demo sequence is fixed: import pinned Alpine rootfs; run an isolated shell c
 
 - 2026-07-12: Initial authoritative plan created before any implementation, as required by the objective.
 - 2026-07-12: Current web research and live environment discovery completed. Locked systemd delegated cgroups, raw `clone3`, shifted user mapping, overlay/pivot-root filesystem, seccomp/capability model, rtnetlink+nftables networking, Alpine 3.24.1 fixture, Ubuntu 24.04 parity, `us-west1-a`, IAP-only final access, transient Cloud NAT, in-place N2 benchmarking, reproducible Debian packaging, and exact Terraform/provider families. Planning gate closed; Stage 0 implementation authorized.
+- 2026-07-12: Operator explicitly authorized automatic in-place escalation from `e2-micro` through the smallest sufficient size up to `n2-standard-16` whenever the free-tier VM constrains development, plus deliberate N2 stress testing. Final cleanup remains non-negotiable: exactly one running `e2-micro`, with all other development/load resources deleted.
+- 2026-07-12: Live billing-account discovery showed the account currency is TRY, so the API cannot accept a USD-denominated budget. Locked the budget at TRY 470, approximately USD 10 at the observed 46.98 USD/TRY rate; threshold percentages remain unchanged.
 
 ## 12. Stage status
 

@@ -100,8 +100,8 @@ resource "google_billing_budget" "monthly" {
   }
   amount {
     specified_amount {
-      currency_code = "USD"
-      units         = "10"
+      currency_code = "TRY"
+      units         = "470"
     }
   }
   threshold_rules {

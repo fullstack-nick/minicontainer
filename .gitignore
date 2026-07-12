@@ -6,6 +6,7 @@
 *.deb
 *.tar.gz
 compile_commands.json
-infra/terraform/*.tfstate*
+**/*.tfstate*
+*.tfplan
 infra/terraform/*.tfvars
 !infra/terraform/example.tfvars
