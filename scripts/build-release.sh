@@ -9,11 +9,11 @@ fi
 commit="$(git -C "$repo_root" rev-parse HEAD)"
 SOURCE_DATE_EPOCH="$(git -C "$repo_root" show -s --format=%ct HEAD)"
 export SOURCE_DATE_EPOCH
-build_dir="$repo_root/build/release"
+build_dir="${TMPDIR:-/tmp}/minicontainer-release-$commit"
 dist_dir="$repo_root/dist"
 
 cmake --fresh -S "$repo_root" -B "$build_dir" -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DMC_GIT_COMMIT="$commit"
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DMC_GIT_COMMIT="$commit"
 cmake --build "$build_dir"
 ctest --test-dir "$build_dir" --output-on-failure
 cmake --build "$build_dir" --target package
